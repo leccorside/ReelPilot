@@ -9,6 +9,9 @@ services:
     image: reelpilot-web:${IMAGE_TAG:-local}
     environment:
       NODE_ENV: production
+      # Fixed public address for Auth.js URLs (ignores Host/X-Forwarded-Host headers).
+      AUTH_URL: ${APP_URL}/api/auth
+      AUTH_RATE_LIMIT_SCALE: "1"
       WATCHPACK_POLLING: !reset null
       CHOKIDAR_USEPOLLING: !reset null
     volumes: !reset []

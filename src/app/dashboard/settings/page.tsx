@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import { DashboardShell } from "@/components/dashboard/shell";
 import { Badge, Card, CardHeader, Confirm, Modal, Switch, Toast } from "@/components/dashboard/ui";
 import { buttonClass } from "@/components/button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "@/components/icons";
-import { signOut, updateDb, useDb } from "@/lib/store";
+import { resetDb, updateDb, useDb } from "@/lib/store";
 import { PLATFORMS } from "@/lib/options";
 
 const ICONS = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: YoutubeIcon } as const;
@@ -16,15 +16,52 @@ const TIMEZONES = ["UTC", "America/New_York", "America/Los_Angeles", "America/Sa
 
 export default function SettingsPage() {
   const db = useDb();
-  const router = useRouter();
+  const { data: session, update } = useSession();
+  const user = session?.user;
   const [name, setName] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
   const [del, setDel] = useState(false);
+  const [everywhere, setEverywhere] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  if (!db?.user) return <DashboardShell crumbs={[{ label: "Settings" }]}>{null}</DashboardShell>;
+  if (!db || !user) return <DashboardShell crumbs={[{ label: "Settings" }]}>{null}</DashboardShell>;
 
-  const shownName = name ?? db.user.name;
+  const shownName = name ?? user.name ?? "";
+
+  const saveProfile = async () => {
+    setSaving(true);
+    const res = await fetch("/api/account/", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: shownName }),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setToast(body.error ?? "Could not save your profile");
+      return;
+    }
+    // With an argument, update() POSTs to the session endpoint (trigger "update"), and src/auth.ts
+    // re-reads the profile from the database. Without one it only re-fetches the current token.
+    // The argument's content is ignored on purpose: the client never sets session fields.
+    await update({});
+    setName(null);
+    setToast("Profile saved");
+  };
+
+  const signOutEverywhere = async () => {
+    const res = await fetch("/api/account/sign-out-everywhere/", { method: "POST" });
+    if (!res.ok) return setToast("Could not sign out other devices");
+    await signOut({ redirectTo: "/login/" });
+  };
+
+  const deleteAccount = async () => {
+    const res = await fetch("/api/account/", { method: "DELETE" });
+    if (!res.ok) return setToast("Could not delete your account");
+    resetDb(); // the dashboard data that still lives in this browser (until Passo 3)
+    await signOut({ redirectTo: "/" });
+  };
   const platform = PLATFORMS.find((p) => p.id === connecting);
 
   return (
@@ -36,13 +73,7 @@ export default function SettingsPage() {
             className="space-y-4 px-6 pb-6"
             onSubmit={(e) => {
               e.preventDefault();
-              updateDb((d) => {
-                if (d.user) d.user.name = shownName.trim() || d.user.name;
-                const acc = d.accounts.find((a) => a.email === d.user?.email);
-                if (acc && d.user) acc.name = d.user.name;
-              });
-              setName(null);
-              setToast("Profile saved");
+              void saveProfile();
             }}
           >
             <div className="grid gap-4 sm:grid-cols-2">
@@ -52,10 +83,10 @@ export default function SettingsPage() {
               </label>
               <label className="space-y-2 text-sm font-medium">
                 <span>Email</span>
-                <input className={field} value={db.user.email} disabled />
+                <input className={field} value={user.email ?? ""} disabled />
               </label>
             </div>
-            <button className={buttonClass("primary")} disabled={name === null}>
+            <button className={buttonClass("primary")} disabled={name === null || !shownName.trim() || saving}>
               Save changes
             </button>
           </form>
@@ -150,14 +181,11 @@ export default function SettingsPage() {
         <Card className="border-red-200">
           <CardHeader title="Danger zone" description="Sign out or remove your account and everything in it" />
           <div className="flex flex-wrap gap-2 px-6 pb-6">
-            <button
-              className={buttonClass("outline")}
-              onClick={() => {
-                signOut();
-                router.push("/");
-              }}
-            >
+            <button className={buttonClass("outline")} onClick={() => signOut({ redirectTo: "/" })}>
               Sign out
+            </button>
+            <button className={buttonClass("outline")} onClick={() => setEverywhere(true)}>
+              Sign out of all devices
             </button>
             <button className={buttonClass("primary", "default", "bg-destructive hover:bg-destructive/90")} onClick={() => setDel(true)}>
               Delete account
@@ -200,16 +228,15 @@ export default function SettingsPage() {
         title="Delete your account?"
         description="Your series, videos and connected accounts are removed. This can't be undone."
         confirmLabel="Delete account"
-        onConfirm={() => {
-          updateDb((d) => {
-            d.accounts = d.accounts.filter((a) => a.email !== d.user?.email);
-            d.user = null;
-            d.series = [];
-            d.videos = [];
-            d.connected = { tiktok: null, instagram: null, youtube: null };
-          });
-          router.push("/");
-        }}
+        onConfirm={() => void deleteAccount()}
+      />
+      <Confirm
+        open={everywhere}
+        onClose={() => setEverywhere(false)}
+        title="Sign out of all devices?"
+        description="Every browser where you are signed in loses access within a minute, including this one."
+        confirmLabel="Sign out everywhere"
+        onConfirm={() => void signOutEverywhere()}
       />
       <Toast message={toast} onDone={() => setToast(null)} />
     </DashboardShell>

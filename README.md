@@ -386,9 +386,15 @@ reelpilot/
 │   │   │   ├── schema.ts
 │   │   │   ├── credits.ts
 │   │   │   └── index.ts
+│   │   ├── accounts.ts
 │   │   ├── crypto.ts
-│   │   └── health.ts
+│   │   ├── health.ts
+│   │   ├── password.ts
+│   │   └── rate-limit.ts
 │   ├── test/
+│   ├── auth.ts
+│   ├── auth.config.ts
+│   ├── middleware.ts
 │   └── instrumentation.ts
 │
 ├── drizzle/
@@ -420,6 +426,12 @@ reelpilot/
 | `src/server/db/schema.ts` | Schema do banco (Drizzle): usuários, séries, vídeos, etapas, créditos, assinaturas e redes sociais |
 | `src/server/db/credits.ts` | Saldo de créditos, calculado pela soma do extrato |
 | `src/server/crypto.ts` | Criptografia AES-256-GCM dos tokens das redes sociais |
+| `src/server/accounts.ts` | Cadastro, verificação de senha, limites de tentativas e versão de sessão |
+| `src/server/password.ts` | Hash de senha com argon2id |
+| `src/server/rate-limit.ts` | Contadores de tentativas no Redis |
+| `src/auth.ts` | Configuração completa do Auth.js (provedores, sessão JWT, conferência no banco) |
+| `src/auth.config.ts` | Parte da configuração que roda no Edge (usada pelo middleware) |
+| `src/middleware.ts` | Protege `/dashboard` e a API privada; adiciona a barra final às URLs de páginas |
 | `src/test` | Preparação dos testes (banco `_test` recriado a cada execução) |
 | `src/instrumentation.ts` | Validação inicial das variáveis de ambiente |
 | `drizzle` | Migrações SQL versionadas |
@@ -455,6 +467,27 @@ Caso alguma configuração obrigatória esteja ausente ou inválida, o servidor 
 - Substituir todas as senhas padrão.
 - Manter o `.env.example` atualizado.
 - Gerar a `ENCRYPTION_KEY` com `openssl rand -base64 32` e guardá-la com cuidado: sem ela, os tokens das redes sociais salvos no banco ficam ilegíveis.
+- Gerar o `AUTH_SECRET` da mesma forma. Trocá-lo desconecta todos os usuários.
+- Usar `AUTH_RATE_LIMIT_SCALE=1` em produção. O valor maior (50) serve só para o desenvolvimento, onde os testes de ponta a ponta fazem muitos logins seguidos.
+
+---
+
+## 🔑 Login e contas
+
+- **Cadastro e login com e-mail e senha:** senhas guardadas com argon2id. O e-mail não diferencia maiúsculas de minúsculas.
+- **Login com Google:** fica ativo quando `AUTH_GOOGLE_ID` e `AUTH_GOOGLE_SECRET` estão preenchidos. No Google Cloud Console, crie um "ID do cliente OAuth" do tipo aplicativo da Web, com o redirecionamento autorizado `<APP_URL>/api/auth/callback/google` (no desenvolvimento, `http://localhost:3100/api/auth/callback/google`). Sem essas variáveis, o botão avisa que o Google ainda não está disponível.
+- **Sessão:** JWT válido por 2 horas sem atividade, renovado automaticamente enquanto o painel está aberto. A cada minuto o servidor confere a sessão no banco, então uma conta excluída ou o "Sign out of all devices" (em Settings) derruba as sessões abertas em até 1 minuto.
+- **Proteção contra tentativas repetidas** (contadores no Redis):
+
+  | Limite | Valor |
+  |---|---|
+  | Senhas erradas por e-mail | 5 a cada 15 minutos |
+  | Tentativas de login por IP | 30 a cada 15 minutos |
+  | Cadastros por IP | 5 por hora |
+
+- **Rotas protegidas:** `/dashboard/**` e toda a API, menos `/api/auth`, `/api/health` e `/api/register`. Quem não está logado vai para o login e volta à página pedida depois de entrar.
+
+> ⚠️ Em produção, o limite por IP depende do proxy reverso (Caddy) sobrescrever o `X-Forwarded-For` com o IP real e de o container `web` não ter porta publicada. Sem isso, o cabeçalho pode ser falsificado pelo cliente.
 
 ---
 
@@ -545,6 +578,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Monitoramento básico de saúde
 - [x] Configuração do ambiente de testes
 - [x] Banco de dados com Drizzle, migrações versionadas e seed — Passo 1
+- [x] Autenticação real: e-mail/senha, Google, sessão JWT e limites de tentativas — Passo 2
 
 ### Aplicação e processamento
 

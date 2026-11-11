@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { signOut, useSession } from "next-auth/react";
 import { ChevronRight, ChevronsUpDown, CreditCard, Film, Info, Layers, LogOut, Menu, Settings, X, Zap } from "lucide-react";
 import { Logo } from "../logo";
-import { type Db, signOut, useDb } from "@/lib/store";
+import { type Db, useDb } from "@/lib/store";
+
+type SessionUser = { name?: string | null; email?: string | null };
 
 const NAV = [
   { href: "/dashboard/series/", label: "Series", icon: Layers },
@@ -14,16 +17,15 @@ const NAV = [
   { href: "/dashboard/billing/", label: "Billing", icon: CreditCard },
 ];
 
-function UserMenu({ db }: { db: Db }) {
+function UserMenu({ user }: { user: SessionUser }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const router = useRouter();
   useEffect(() => {
     const close = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
-  const name = db.user?.name || db.user?.email || "";
+  const name = user.name || user.email || "";
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-accent">
@@ -35,7 +37,7 @@ function UserMenu({ db }: { db: Db }) {
       </button>
       {open && (
         <div className="absolute bottom-full left-0 right-0 mb-2 rounded-md border bg-popover p-1 shadow-md text-sm z-50">
-          <div className="px-2 py-1.5 text-xs text-muted-foreground truncate">{db.user?.email}</div>
+          <div className="px-2 py-1.5 text-xs text-muted-foreground truncate">{user.email}</div>
           <Link href="/dashboard/settings/" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent" onClick={() => setOpen(false)}>
             <Settings className="h-4 w-4" /> Settings
           </Link>
@@ -44,10 +46,7 @@ function UserMenu({ db }: { db: Db }) {
           </Link>
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 hover:bg-accent text-destructive"
-            onClick={() => {
-              signOut();
-              router.push("/");
-            }}
+            onClick={() => signOut({ redirectTo: "/" })}
           >
             <LogOut className="h-4 w-4" /> Sign out
           </button>
@@ -57,7 +56,7 @@ function UserMenu({ db }: { db: Db }) {
   );
 }
 
-export function Sidebar({ db, onNavigate }: { db: Db | null; onNavigate?: () => void }) {
+export function Sidebar({ db, user, onNavigate }: { db: Db | null; user: SessionUser | null; onNavigate?: () => void }) {
   const path = usePathname() || "";
   const credits = db?.credits ?? 60;
   const total = db?.creditsTotal ?? 60;
@@ -107,7 +106,7 @@ export function Sidebar({ db, onNavigate }: { db: Db | null; onNavigate?: () => 
         >
           <Zap className="h-4 w-4 fill-primary" /> Upgrade
         </Link>
-        <div className="border-t pt-2">{db?.user && <UserMenu db={db} />}</div>
+        <div className="border-t pt-2">{user && <UserMenu user={user} />}</div>
       </div>
     </>
   );
@@ -117,20 +116,16 @@ export type Crumb = { label: string; href?: string };
 
 export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[]; actions?: React.ReactNode; children: React.ReactNode }) {
   const db = useDb();
-  const router = useRouter();
-  const path = usePathname();
+  // The dashboard layout guarantees a session; the middleware sends visitors without one to /login.
+  const user = useSession().data?.user ?? null;
   const [drawer, setDrawer] = useState(false);
 
-  useEffect(() => {
-    if (db && !db.user) router.replace(`/login/?callbackUrl=${encodeURIComponent(path || "/dashboard/")}`);
-  }, [db, router, path]);
-
-  if (!db || !db.user) return <div className="min-h-screen bg-background" />;
+  if (!db) return <div className="min-h-screen bg-background" />;
 
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden md:flex flex-col w-64 shrink-0 bg-background border-r sticky top-0 h-screen">
-        <Sidebar db={db} />
+        <Sidebar db={db} user={user} />
       </aside>
       {drawer && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -139,7 +134,7 @@ export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[];
             <button className="absolute right-3 top-5" aria-label="Close menu" onClick={() => setDrawer(false)}>
               <X className="h-5 w-5" />
             </button>
-            <Sidebar db={db} onNavigate={() => setDrawer(false)} />
+            <Sidebar db={db} user={user} onNavigate={() => setDrawer(false)} />
           </aside>
         </div>
       )}

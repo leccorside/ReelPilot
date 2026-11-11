@@ -1,7 +1,12 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 (fundação) e 1 (banco de dados) estão concluídos**.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 (fundação), 1 (banco de dados) e 2 (autenticação) estão concluídos**.
+- **Login real** (Auth.js `next-auth@5.0.0-beta.32`, versão fixada por ser beta):
+  - e-mail/senha com argon2id e Google, este último ativo só com `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET`;
+  - sessão JWT de 2 h, conferida no banco a cada minuto;
+  - limites de tentativas no Redis;
+  - o middleware protege `/dashboard/**` e a API privada.
 - **Banco:** PostgreSQL com Drizzle ORM 0.45.4.
   - O schema fica em `src/server/db/schema.ts` e tem 12 tabelas: `users`, `accounts`, `sessions`, `verification_tokens`, `series`, `music_tracks`, `series_music_tracks`, `videos`, `video_steps`, `credit_ledger`, `subscriptions` e `social_connections`.
   - As migrações SQL ficam em `drizzle/`. O serviço `migrate` aplica as migrações antes do `web` e encerra.
@@ -64,6 +69,42 @@
     - **Testes:** `src/test/global-setup.ts` apaga e recria o banco `reelpilot_test` e roda o `migrate.mjs` nele, provando que as migrações sobem do zero. `src/server/db/schema.test.ts` tem 12 testes (todas as tabelas e regras acima) e `src/server/crypto.test.ts` tem 3.
     - **Atalhos novos:** `migrate`, `db-generate <nome>`, `seed` e `psql` no `dc.ps1`. O `.vscode/settings.json` registra as tags `!reset`/`!override` do Compose para a extensão YAML.
     - **Resultado dos testes:** typecheck ✅, lint ✅, Vitest 19/19 ✅, Playwright 4/4 ✅, seed rodado duas vezes sem duplicar ✅, pilha de produção (migrate → web) saudável ✅.
+14. **Passo 2 concluído (2026-11-11)**, com a decisão da pessoa de usar **JWT com expiração curta**:
+    - **Pacotes:** `next-auth@5.0.0-beta.32` (fixo), `@auth/drizzle-adapter@1.11.3` e `@node-rs/argon2@2.2.2` (módulo nativo, em `serverComponentsExternalPackages`).
+    - **`src/auth.config.ts`** é a parte que roda no Edge: páginas de login e erro em `/login/`, JWT com `maxAge` de 2 h e `session.user.id`.
+    - **`src/auth.ts`** tem a configuração preguiçosa (o `env()` e o `db()` só são lidos na primeira requisição, nunca na build):
+      - o adaptador Drizzle grava o e-mail em minúsculas;
+      - o Google entra só com as duas variáveis preenchidas, com `allowDangerousEmailAccountLinking` (o Google verifica o e-mail);
+      - o provedor Credentials devolve os códigos `invalid_credentials`/`rate_limited`;
+      - o callback `jwt` guarda `sv` (`users.session_version`) e `checkedAt`, confere no banco a cada 60 s ou no `update()`, e devolve `null` se a conta sumiu ou a versão mudou;
+      - o evento `createUser` dá o bônus de cadastro às contas do Google.
+    - **`src/server/accounts.ts`:**
+      - `registerUser` cria a conta e o bônus numa transação; 409 para e-mail repetido sem diferenciar maiúsculas;
+      - `verifyCredentials` faz uma verificação falsa de argon2 quando o e-mail não existe, para não revelar contas pelo tempo de resposta;
+      - limites: 5 falhas por e-mail a cada 15 min, 30 tentativas por IP a cada 15 min e 5 cadastros por IP por hora; o sucesso zera as falhas;
+      - `grantSignupBonus` é idempotente (`idempotency_key = signup:<id>`);
+      - `clientIp` usa a última entrada do `X-Forwarded-For`.
+    - **Outros módulos:** `src/server/rate-limit.ts` (contadores no Redis com `INCR` + `EXPIRE NX`), `src/server/password.ts` e `src/server/redis.ts`.
+    - **Migração `0001_user_session_version`:** `users.session_version`.
+    - **Rotas:**
+      - `/api/auth/[...nextauth]`, que reconstrói a URL pelo host público quando não há `AUTH_URL`;
+      - `POST /api/register`;
+      - `PATCH`/`DELETE /api/account`;
+      - `POST /api/account/sign-out-everywhere`.
+    - **Telas:**
+      - `/login` virou página no servidor, que já redireciona quem está logado, mais `login-view.tsx` com o mesmo visual;
+      - `callbackUrl` só aceita caminhos do próprio site (`src/lib/auth-shared.ts`);
+      - "Forgot password?" agora diz a verdade (o e-mail só chega no Passo 16);
+      - `src/app/dashboard/layout.tsx` tem o `SessionProvider`, que renova a sessão a cada 5 min e ao focar a janela;
+      - o menu do painel e os ajustes (perfil, sair, **sair de todos os dispositivos** e excluir conta) usam a sessão real;
+      - o botão do Google no cabeçalho cai no login com aviso quando o Google não está configurado.
+    - **`store.ts`:** perdeu o login simulado (`user`, `accounts`, `signIn`...) e ganhou `resetDb()`.
+    - **Variáveis novas:** `AUTH_SECRET` (gerado no `.env`), `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` (vazios), `AUTH_RATE_LIMIT_SCALE` (50 no `.env` de desenvolvimento, 1 na produção) e `AUTH_TRUST_HOST`. A produção fixa `AUTH_URL=${APP_URL}/api/auth`.
+    - **Testes:**
+      - Vitest: `accounts.test.ts` (10 testes, banco `_test` e Redis no banco lógico 1) e `auth-shared.test.ts` (5);
+      - Playwright: `e2e/auth.spec.ts` (10 testes: cadastro, e-mail repetido, senha errada e depois a certa voltando ao `callbackUrl`, aviso do Google, redirecionamento de rota protegida, 401 na API, `callbackUrl` externo ignorado, logout, perfil salvo e exclusão de conta) e `e2e/helpers.ts`;
+      - `expect.timeout` de 15 s, porque o servidor de testes compila cada página na primeira visita.
+    - **Resultado:** typecheck ✅, lint ✅, Vitest 35/35 ✅, Playwright 14/14 ✅ duas vezes seguidas, login completo na imagem de produção ✅ (cadastro, login, painel, sessão, logout).
 
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
@@ -73,6 +114,8 @@
 - **Kokoro na CPU:** deixa os 12 GB da RTX 3060 só para as imagens. O Kokoro não tem alemão, que sai do assistente no Passo 7.
 - **Portas 3100 e 8125:** a 3000 e a 8025 são usadas pelo projeto `ajudaisocial`, que sobe junto com o Docker.
 - **Node 24 LTS** (`node:24.22.1-alpine3.24`) nas imagens; todas as imagens com versão fixada.
+- **Sessão JWT de 2 h com conferência no banco a cada minuto** (decisão da pessoa no Passo 2). Ela troca a revogação instantânea por simplicidade; o `session_version` dá o "sair de todos os dispositivos" com atraso de até 1 minuto.
+- **Barra final das URLs feita pelo middleware** (`skipTrailingSlashRedirect`), só para páginas. A API aceita os dois formatos.
 - Estilos de arte com nome de marca registrada ("Disney", "Ghibli", "Lego") serão renomeados no Passo 8.
 - Sem confirmação de permissão: nome, logotipo, fotos, depoimentos e textos longos (FAQ, termos, privacidade) foram substituídos por versões próprias. A busca por semelhança visual com o original deixou de ser objetivo; marca e textos definitivos ficam para o Passo 17.
 
@@ -84,6 +127,14 @@
 - **Aspas em comandos PowerShell → `docker exec sh -c`:** o PowerShell 5.1 quebra as aspas internas (`cut -d" "`, `psql -F " | "`). Para comandos com aspas aninhadas, usar a ferramenta Bash ou um script.
 - **Tipos antigos em `.next/types`** após apagar uma rota quebram o `tsc`. Limpar com `docker compose exec web rm -rf .next/types/<rota>`.
 - **ioredis com falha de conexão** registrava "Unhandled error event". O cliente da checagem de saúde tem um listener de `error`.
+- **Auth.js montava URLs com `http://0.0.0.0:3000`** (o endereço interno do container), porque usa `request.url`, e o Next já preenche `X-Forwarded-Host`. A rota `/api/auth/[...nextauth]` reconstrói a URL pelo host público; na produção vale o `AUTH_URL` fixo.
+- **Logout e atualização de perfil não funcionavam no navegador** (`MissingCSRF` no log). Duas causas:
+  - o `next-auth/react` chama `/api/auth/*` sem barra final; o 308 do `trailingSlash` fazia o navegador perder o corpo do POST, com o token CSRF. Correção: `skipTrailingSlashRedirect` e redirecionamento de barra feito pelo middleware, só para páginas;
+  - o middleware também rodava em `/api/auth` e reemitia o cookie de sessão, sobrescrevendo o cookie que o Auth.js apaga ou troca. Correção: as rotas públicas de API saíram do `matcher`.
+- **`update()` do `useSession` sem argumento só faz GET** (não dispara `trigger: "update"`). O perfil chama `update({})`.
+- **E2E: `getByRole("alert")` achava 2 elementos**, porque o Next tem o `__next-route-announcer__` com `role="alert"`. O helper `formError()` procura o alerta dentro do diálogo. Também `toHaveURL(/\/$/)` casava com qualquer página; a página inicial usa uma expressão exata.
+- **Aviso de build conhecido e inofensivo:** a `jose` (usada pelo Auth.js) referencia `CompressionStream`, que não existe no runtime Edge. Os tokens não usam compressão.
+- **IP do cliente sem proxy:** o Next mantém um `X-Forwarded-For` enviado pelo cliente (falsificável) e, sem ele, usa o IP do gateway do Docker (igual para todos). O limite por IP só é confiável atrás do Caddy (Passo 19).
 - Do protótipo:
   - texto legal estimado por caracteres ficou curto → comparar a altura com o original;
   - heredocs com apóstrofo quebravam no terminal → gravar arquivos com a ferramenta de escrita;
@@ -93,12 +144,15 @@
   - `favicon.ico` → criado em `public/`.
 
 ## Pendências
-- **Próximo: Passo 2 (autenticação real com Auth.js)**, aguardando autorização. Ponto de atenção: o login com e-mail e senha (Credentials) do Auth.js exige sessão JWT. É preciso decidir entre JWT com expiração curta ou criar a sessão no banco manualmente.
+- **Próximo: Passo 3 (API de séries, vídeos e créditos)**, aguardando autorização.
+- Testar o login com Google com credenciais reais: a pessoa precisa criar o cliente OAuth no Google Cloud (instruções no README e no `.env.example`).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- O banco existe, mas o painel ainda grava os dados no navegador até o Passo 3 (API).
+- O banco existe, mas o painel ainda grava as séries, os vídeos e os créditos no navegador até o Passo 3 (API). Esses dados **não são separados por usuário**: duas contas no mesmo navegador veem as mesmas séries.
+- **Sem verificação de e-mail nem recuperação de senha** até o Passo 16 (e-mails).
+- Preferências (publicar automaticamente, notificações, fuso) e contas sociais nos ajustes ainda ficam no navegador (passos 3 e 12).
 - Os nomes do assistente (por exemplo "1 video per day") viraram enums no banco (`daily`, `twice_daily`, `three_per_week`, `weekly`); o mapeamento entre os dois entra no Passo 3. Vídeos são simulados, o pagamento não cobra e a conexão social pede só o @.
 - O Kokoro e o ComfyUI ainda não estão no compose (passos 7 e 8). Com a IA rodando, nada mais pode ocupar a VRAM da RTX 3060.
 - Produção ainda sem HTTPS, worker, agendador e backup (Passo 19).

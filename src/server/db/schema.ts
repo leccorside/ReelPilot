@@ -80,6 +80,8 @@ export const users = pgTable(
     image: text("image"),
     /** argon2 hash; null for accounts that only sign in with Google. */
     passwordHash: text("password_hash"),
+    /** Bumped by "sign out everywhere" and account changes; JWTs carrying an older value stop working. */
+    sessionVersion: integer("session_version").notNull().default(0),
     timezone: text("timezone").notNull().default("UTC"),
     emailNotifications: boolean("email_notifications").notNull().default(true),
     autoPublish: boolean("auto_publish").notNull().default(true),

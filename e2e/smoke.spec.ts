@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { signedInUser } from "./helpers";
 
 test("home page renders the hero", async ({ page }) => {
   await page.goto("/");
@@ -20,14 +21,12 @@ test("health endpoint reports every service as up", async ({ request }) => {
 });
 
 test("dashboard redirects to series, and a series opens on its own route", async ({ page }) => {
-  // The dashboard still reads the browser store (replaced by the API in Passo 3): seed it.
-  await page.addInitScript(() => {
-    const user = { name: "E2E", email: "e2e@example.com", provider: "google" };
+  await signedInUser(page);
+  // Series still live in the browser store until the API arrives (Passo 3): seed one.
+  await page.evaluate(() => {
     window.localStorage.setItem(
       "reelpilot-db-v1",
       JSON.stringify({
-        user,
-        accounts: [user],
         series: [
           {
             id: "s1e2e",

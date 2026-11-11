@@ -1,11 +1,10 @@
 "use client";
 
-// A small browser-side store standing in for the original's backend:
-// accounts, series, videos, credits and connected social accounts live in localStorage.
+// Browser-side store for the dashboard data that has no API yet (Passo 3 replaces it):
+// series, videos, credits, plan and connected social accounts live in localStorage.
+// Accounts and sign-in are real since Passo 2 (Auth.js + PostgreSQL).
 
 import { useEffect, useState } from "react";
-
-export type User = { name: string; email: string; password?: string; provider: "email" | "google" };
 
 export type Series = {
   id: string;
@@ -38,8 +37,6 @@ export type Video = {
 export type Plan = "free" | "starter" | "growth" | "pro";
 
 export type Db = {
-  user: User | null;
-  accounts: User[];
   series: Series[];
   videos: Video[];
   credits: number;
@@ -52,8 +49,6 @@ export type Db = {
 const KEY = "reelpilot-db-v1";
 
 const empty = (): Db => ({
-  user: null,
-  accounts: [],
   series: [],
   videos: [],
   credits: 60,
@@ -104,39 +99,10 @@ export function useDb(): Db | null {
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
-/** Signs in an existing account or registers a new one. Returns an error message or null. */
-export function signIn(user: User, mode: "signup" | "signin" | "google"): string | null {
-  let error: string | null = null;
-  updateDb((db) => {
-    const known = db.accounts.find((a) => a.email.toLowerCase() === user.email.toLowerCase());
-    if (mode === "signup" && known && known.provider === "email") {
-      error = "An account with this email already exists.";
-      return;
-    }
-    if (mode === "signin") {
-      if (!known) {
-        error = "No account found with this email.";
-        return;
-      }
-      if (known.password && known.password !== user.password) {
-        error = "Incorrect password.";
-        return;
-      }
-    }
-    if (!known) db.accounts.push(user);
-    db.user = known ? { ...known } : user;
-  });
-  return error;
-}
-
-export function signOut() {
-  updateDb((db) => {
-    db.user = null;
-  });
-}
-
-export function signInWithGoogle() {
-  signIn({ name: "Demo Creator", email: "creator@example.com", provider: "google" }, "google");
+/** Clears the dashboard data kept in this browser (used when the account is deleted). */
+export function resetDb() {
+  window.localStorage.removeItem(KEY);
+  listeners.forEach((l) => l());
 }
 
 /** Starts generating the next video of a series; it becomes ready a few seconds later. */

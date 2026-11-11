@@ -7,7 +7,8 @@ import { Menu, X } from "lucide-react";
 import { Logo } from "./logo";
 import { GoogleIcon } from "./icons";
 import { buttonClass } from "./button";
-import { signInWithGoogle } from "@/lib/store";
+import { DEFAULT_AFTER_LOGIN } from "@/lib/auth-shared";
+import { startGoogleSignIn } from "@/lib/google-sign-in";
 
 export function SiteHeader() {
   const [scrolled, setScrolled] = useState(false);
@@ -21,9 +22,9 @@ export function SiteHeader() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  const google = () => {
-    signInWithGoogle();
-    router.push("/dashboard/series/");
+  const google = async () => {
+    // Without Google configured on the server, the login page explains it and offers e-mail sign-in.
+    if (!(await startGoogleSignIn(DEFAULT_AFTER_LOGIN))) router.push("/login/?error=GoogleUnavailable");
   };
 
   return (

@@ -13,6 +13,7 @@ const valid = {
   SMTP_PORT: "1025",
   MAIL_FROM: "ReelPilot <no-reply@localhost>",
   ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+  AUTH_SECRET: "x".repeat(32),
 };
 
 describe("parseEnv", () => {
@@ -21,6 +22,13 @@ describe("parseEnv", () => {
     expect(env.SMTP_PORT).toBe(1025);
     expect(env.S3_REGION).toBe("us-east-1");
     expect(env.NODE_ENV).toBe("development");
+    expect(env.AUTH_RATE_LIMIT_SCALE).toBe(1);
+  });
+
+  it("treats empty Google credentials as not configured", () => {
+    const env = parseEnv({ ...valid, AUTH_GOOGLE_ID: "", AUTH_GOOGLE_SECRET: "" });
+    expect(env.AUTH_GOOGLE_ID).toBeUndefined();
+    expect(env.AUTH_GOOGLE_SECRET).toBeUndefined();
   });
 
   it("lists every invalid variable in one error", () => {

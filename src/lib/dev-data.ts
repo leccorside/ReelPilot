@@ -101,7 +101,11 @@ const baseSeries = (id: string): SeriesDto => ({
 export function devSeries(dataset: DevDataset, id: string): SeriesDto {
   const s = baseSeries(id);
   switch (dataset) {
-    case "worst":
+    case "worst": {
+      // Opening a series from the worst-case list (break-ui on the series detail) keeps its name,
+      // status and counts, so the no-spaces name and the paused state reach the detail page too.
+      const listed = WORST_SERIES_LIST.find((x) => x.id === id);
+      const fromList = listed && { name: listed.name, status: listed.status, videoCount: listed.videoCount, publishedCount: listed.publishedCount, createdAt: listed.createdAt };
       return {
         ...s,
         // 76 characters, close to the API's limit of 80.
@@ -123,7 +127,9 @@ export function devSeries(dataset: DevDataset, id: string): SeriesDto {
         // A valid IANA zone that is not in the dashboard's short list.
         timezone: "America/Argentina/ComodRivadavia",
         musicTrackIds: WORST_TRACKS.slice(0, 3).map((t) => t.id),
+        ...fromList,
       };
+    }
     case "empty":
       return { ...s, name: "J", niche: "Cat", formats: ["quiz"], musicTrackIds: [] };
     case "one":

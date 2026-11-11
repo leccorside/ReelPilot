@@ -12,11 +12,27 @@ export function Card({ children, className = "", ...rest }: React.HTMLAttributes
   );
 }
 
-export function CardHeader({ title, description, children }: { title: string; description?: string; children?: React.ReactNode }) {
+export function CardHeader({
+  title,
+  description,
+  badge,
+  children,
+}: {
+  title: string;
+  description?: string;
+  /** Shown right after the title (a status, for example). */
+  badge?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="flex items-start justify-between gap-4 p-6 pb-4">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold leading-none tracking-tight">{title}</h2>
+    // Wraps: when the title needs its room, the actions move below it instead of squeezing it or
+    // pushing the page sideways; names without spaces break anywhere (break-ui on the series detail).
+    <div className="flex flex-wrap items-start justify-between gap-4 p-6 pb-4">
+      <div className="min-w-[min(100%,16rem)] flex-1 space-y-1">
+        <h2 dir="auto" className="text-lg font-semibold leading-tight tracking-tight [overflow-wrap:anywhere]">
+          {title}
+          {badge && <span className="ml-2 inline-block align-middle">{badge}</span>}
+        </h2>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
       </div>
       {children}

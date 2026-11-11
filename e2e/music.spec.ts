@@ -41,7 +41,7 @@ test("music uploaded in the wizard is saved with the series and plays back", asy
   await page.getByRole("button", { name: "Create Series" }).click();
 
   await expect(page).toHaveURL(/\/dashboard\/series\/[0-9a-f-]{36}\/$/);
-  await expect(page.getByText("1 track(s)")).toBeVisible();
+  await expect(page.getByText("1 track", { exact: true })).toBeVisible();
   const player = page.getByLabel("Play calm-piano.wav");
   await expect(player).toBeVisible();
 

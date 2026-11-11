@@ -290,6 +290,30 @@
     - **Limite de séries por plano (decisão da pessoa: Free = 1):** `maxSeries` em `src/lib/plans.ts` (Free 1, Starter 1, Growth 3, Pro ilimitado). O `createSeries` conta as séries dentro da transação, com `pg_advisory_xact_lock` por usuário (5 criações simultâneas no Free geram 1), e responde `403` (`PlanLimitError`). O `GET /api/me` devolve `limits.series`/`limits.seriesUsed`, e o assistente mostra o aviso de limite logo na entrada, com "See plans". O plano atual saiu para `src/server/plan.ts`.
     - **Testes:** 6 de API (limites, concorrência, paginação de 120 vídeos sem falhas nem repetições, cursor inválido) e 5 de E2E em `e2e/break-ui.spec.ts`. Os testes de música e de privacidade que criavam uma 2ª série passaram a usar plano pro ou a tela de edição. Resultado: typecheck ✅, lint ✅, Vitest 81/81 ✅, Playwright 43/43 ✅ duas vezes seguidas.
 
+23. **break-ui no detalhe da série (2026-11-11), com correções (`fix all`):**
+    - **Ferramenta:** com `?data=worst`, o `devSeries` usa o nome, o status e as contagens da série da lista de pior caso quando o id é dela (`...b000-000000000002` sem espaços e pausada, `...05` em árabe, `...07` com HTML). Ids aleatórios continuam com a série longa padrão, e os testes do editor não mudam.
+    - **Achados:**
+      - nome sem espaços deixava a página com 994 px em 320 px e 1266 px em 768 px, com as ações fora da tela;
+      - em 320 px, o título ficava em 113 px (6 linhas) e "Generate video" passava 2 px da borda;
+      - "Posting automatically" sem nenhuma plataforma e com o Instagram expirado;
+      - botão desativado sem saldo, explicado só no `title`;
+      - nicho de 1000 caracteres com 800 px de altura;
+      - nomes de faixa com 76 px, sem `title`;
+      - "3 track(s)";
+      - status repetido 3 vezes, com o selo sozinho no rodapé;
+      - agenda de série pausada mostrada como ativa.
+    - **Correções:**
+      - `CardHeader` (`src/components/dashboard/ui.tsx`) com `flex-wrap`, título `flex-1 min-w-[min(100%,16rem)]`, `[overflow-wrap:anywhere]`, `dir="auto"` e a nova prop `badge`; as ações descem para baixo do título quando falta espaço. Vale para todos os cartões do painel;
+      - `src/lib/series-status.ts` (`seriesStatusLine`, `platformStates`): a linha de status diz o que a série faz ("Paused: no new videos until you resume it", "Making videos without posting: no platform selected", "Posts to TikTok and YouTube · Instagram isn't connected", "Videos wait for you to publish them to …" quando a publicação automática está desligada). Conexões `expired` e `revoked` contam como não conectadas. Sem o `/api/me` carregado, só "Active", para não afirmar o que não sabe;
+      - selo Active/Paused ao lado do nome, e o selo do rodapé foi removido;
+      - Platforms marca "(not connected)" e mostra o link "Connect in Settings";
+      - nota visível "You're out of credits…" com "Get more credits";
+      - nicho em linha própria, cortado em 4 linhas, com "Show more"/"Show less" só quando há texto escondido (`ResizeObserver`);
+      - faixas com `line-clamp-2` e `title`, com o player embaixo do nome até `lg`;
+      - "1 track"/"3 tracks"; agenda com "· paused".
+    - **Erro durante a correção:** a classe `block` anulava o `display` do `line-clamp-4`, e o nicho não era cortado. O teste E2E pegou (360 px de altura); o `block` agora só entra quando o texto está aberto.
+    - **Testes:** `src/lib/series-status.test.ts` (5) e 3 testes E2E novos em `e2e/break-ui.spec.ts`; `music.spec.ts` passou a esperar "1 track". Resultado: typecheck ✅, lint ✅, Vitest 86/86 ✅, Playwright 46/46 ✅ duas vezes seguidas.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.

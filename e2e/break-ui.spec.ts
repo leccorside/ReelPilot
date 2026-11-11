@@ -246,6 +246,67 @@ test.describe("series list with worst-case data", () => {
   });
 });
 
+test.describe("series detail with worst-case data", () => {
+  // Worst-case list entries reached from the detail page (src/lib/dev-data.ts devSeries).
+  const NO_SPACES_PAUSED = "00000000-0000-4000-b000-000000000002";
+
+  async function openDetail(page: Page, id: string, data: "worst" | "empty") {
+    await page.goto(`/dashboard/series/${id}/?data=${data}`);
+    await expect(page.getByRole("heading", { name: "Videos", exact: true })).toBeVisible();
+  }
+
+  test("phone: an unbreakable name stays inside the page, with every action in view (#1, #2)", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 320, height: 800 } });
+    const page = await ctx.newPage();
+    await signedInUser(page);
+    for (const id of [NO_SPACES_PAUSED, randomUUID()]) {
+      await openDetail(page, id, "worst");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+      await expect(page.getByRole("button", { name: "Generate video" })).toBeInViewport({ ratio: 1 });
+    }
+    await ctx.close();
+  });
+
+  test("the status is said once and truthfully; tracks read in full; the niche is clamped (#3, #4, #6–#10)", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 768, height: 900 } });
+    const page = await ctx.newPage();
+    await signedInUser(page);
+
+    await openDetail(page, randomUUID(), "worst");
+    const card = page.getByTestId("series-card");
+    await expect(card).toContainText("Posts to TikTok and YouTube · Instagram isn't connected");
+    await expect(card).toContainText("Instagram (not connected)");
+    await expect(card.getByRole("link", { name: "Connect in Settings" })).toBeVisible();
+    await expect(card).toContainText("3 tracks");
+    await expect(card.getByText("Active", { exact: true })).toHaveCount(1);
+
+    const track = page.getByRole("list", { name: "Background music" }).locator("li span").first();
+    expect((await track.boundingBox())!.width).toBeGreaterThan(300);
+    await expect(track).toHaveAttribute("title", /Extended 1 Hour\.mp3$/);
+
+    const niche = page.locator("#series-niche");
+    expect((await niche.boundingBox())!.height).toBeLessThan(100);
+    await page.getByRole("button", { name: "Show more" }).click();
+    expect((await niche.boundingBox())!.height).toBeGreaterThan(200);
+    await expect(page.getByRole("button", { name: "Show less" })).toBeVisible();
+
+    await openDetail(page, NO_SPACES_PAUSED, "worst");
+    await expect(card).toContainText("Paused: no new videos until you resume it");
+    await expect(card).toContainText("3 videos per week at 23:59 (America/Argentina/ComodRivadavia) · paused");
+    await ctx.close();
+  });
+
+  test("no platforms and no credits: it doesn't claim to post, and says why it can't make a video (#3, #5)", async ({ page }) => {
+    await signedInUser(page);
+    await openDetail(page, randomUUID(), "empty");
+    await expect(page.getByText("Making videos without posting: no platform selected", { exact: false })).toBeVisible();
+    await expect(page.getByRole("note")).toContainText("You're out of credits");
+    await expect(page.getByRole("note").getByRole("link", { name: "Get more credits" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Generate video" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Show more" })).toHaveCount(0); // "Cat" fits
+  });
+});
+
 test("the plan's series limit: the API refuses and the wizard says so up front (#6)", async ({ page }) => {
   await signedInUser(page);
   await createSeriesViaApi(page);

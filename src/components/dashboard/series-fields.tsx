@@ -6,66 +6,16 @@ import { Check, Play, Square } from "lucide-react";
 import { Scene } from "../art";
 import { buttonClass } from "../button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "../icons";
-import type { MeDto, SeriesDto, SocialPlatform } from "@/lib/api-types";
-import { SERIES_NAME_MAX, SERIES_NICHE_MAX, SERIES_NICHE_MIN } from "@/lib/limits";
+import type { MeDto, SocialPlatform } from "@/lib/api-types";
+import { SERIES_NAME_MAX, SERIES_NICHE_MAX } from "@/lib/limits";
 import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, TIMEZONES, VOICES } from "@/lib/options";
+import type { SeriesForm } from "@/lib/series-form";
 
 // The fields of a series, shared by the creation wizard (one block per step) and the edit page
 // (all blocks at once), so both look and validate the same way.
 
-export type SeriesForm = {
-  formats: string[];
-  niche: string;
-  language: string;
-  voice: string;
-  musicTrackIds: string[];
-  artStyle: string;
-  captionStyle: string;
-  name: string;
-  platforms: SocialPlatform[];
-  frequency: FrequencyId;
-  postTime: string;
-  timezone: string;
-};
-
-export const emptySeriesForm = (): SeriesForm => ({
-  formats: [],
-  niche: "",
-  language: "en",
-  voice: "",
-  musicTrackIds: [],
-  artStyle: "",
-  captionStyle: "",
-  name: "",
-  platforms: [],
-  frequency: FREQUENCIES[0].id,
-  postTime: "18:00",
-  timezone: "UTC",
-});
-
-export const formFromSeries = (s: SeriesDto): SeriesForm => ({
-  formats: s.formats,
-  niche: s.niche,
-  language: s.language,
-  voice: s.voice,
-  musicTrackIds: s.musicTrackIds,
-  artStyle: s.artStyle,
-  captionStyle: s.captionStyle,
-  name: s.name,
-  platforms: s.platforms,
-  frequency: s.frequency,
-  postTime: s.postTime,
-  timezone: s.timezone,
-});
-
-/** Same rules as the API, checked as the user types. */
-export const sectionValid = {
-  formats: (f: SeriesForm) => f.formats.length > 0 && f.niche.trim().length >= SERIES_NICHE_MIN && f.niche.trim().length <= SERIES_NICHE_MAX,
-  voice: (f: SeriesForm) => !!f.voice,
-  art: (f: SeriesForm) => !!f.artStyle,
-  caption: (f: SeriesForm) => !!f.captionStyle,
-  schedule: (f: SeriesForm) => f.name.trim().length > 0 && f.name.trim().length <= SERIES_NAME_MAX && /^([01]\d|2[0-3]):[0-5]\d$/.test(f.postTime),
-};
+// Form rules (validation, suggested name) live in src/lib/series-form.ts, without UI, so they can be unit-tested.
+export { emptySeriesForm, formFromSeries, sectionValid, type SeriesForm } from "@/lib/series-form";
 
 export const label = "text-sm font-medium leading-none";
 export const field =
@@ -357,6 +307,16 @@ export function ScheduleFields({ value, set, me, showTimezone = false }: FieldsP
           </div>
         )}
       </div>
+      {/* Without the selector (wizard), say which zone the posting time is in. */}
+      {!showTimezone && me && (
+        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="timezone-hint">
+          Times are in <span className="font-medium text-foreground">{me.user.timezone}</span>. You can change it in{" "}
+          <Link href="/dashboard/settings/" className="underline">
+            Settings
+          </Link>
+          .
+        </p>
+      )}
     </>
   );
 }

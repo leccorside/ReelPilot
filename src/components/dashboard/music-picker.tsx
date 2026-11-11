@@ -71,6 +71,14 @@ export function MusicPicker({
     setPinned(new Set(first.slice(0, Math.max(COLLAPSED_ROWS, selected.length)).map((t) => t.id)));
   }, [library, pinned, selected]);
 
+  // A selection can point to a track that no longer exists (removed in another tab, an old draft):
+  // drop it, so the counter and the saved series only use real tracks.
+  useEffect(() => {
+    if (!library) return;
+    const known = selected.filter((id) => library.some((t) => t.id === id));
+    if (known.length !== selected.length) onChange(known);
+  }, [library, selected, onChange]);
+
   const full = selected.length >= MAX_TRACKS_PER_SERIES;
 
   const added = async (tracks: MusicTrackDto[]) => {

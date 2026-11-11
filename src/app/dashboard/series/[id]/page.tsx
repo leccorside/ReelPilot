@@ -22,12 +22,16 @@ export default function SeriesDetailPage() {
   const [toast, setToast] = useState<string | null>(null);
   const router = useRouter();
 
-  // Coming back from the edit page (?saved=1): confirm, then clean the address.
+  // Coming from the edit page (?saved=1) or from the wizard when the first video couldn't be queued
+  // (?first=no-credits|failed): say so once, then clean the address.
+  const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("saved") === "1") {
-      setToast("Changes saved");
-      router.replace(`/dashboard/series/${id}/`);
-    }
+    const params = new URLSearchParams(window.location.search);
+    const first = params.get("first");
+    if (params.get("saved") === "1") setToast("Changes saved");
+    if (first === "no-credits") setNotice("Your series is ready, but its first video wasn't made because you're out of credits. Generate it here when you have credits again.");
+    if (first === "failed") setNotice("Your series is ready, but its first video couldn't be queued. Use “Generate video” to try again.");
+    if (params.has("saved") || params.has("first")) router.replace(`/dashboard/series/${id}/`);
   }, [id, router]);
 
   const toggleStatus = async () => {
@@ -77,6 +81,11 @@ export default function SeriesDetailPage() {
         </Card>
       ) : (
         <div className="space-y-6">
+          {notice && (
+            <p role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {notice}
+            </p>
+          )}
           <Card>
             <CardHeader
               title={s.name}

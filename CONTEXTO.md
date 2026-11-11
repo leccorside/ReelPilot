@@ -225,6 +225,35 @@
       - o erro da importação fica longe do botão e é apagado pelo upload;
       - o servidor corta a extensão de nomes de arquivo acima de 120 caracteres.
 
+20. **break-ui no assistente de criação (2026-11-11), com correções (`fix all`):**
+    - **Achados**, com capturas em 1280, 768 e 320 px e zoom de 200% e cenários digitados:
+      - "Continue" e "Create Series" desativados sem dizer por quê;
+      - nichos de 2 letras ("F1", "AI") recusados;
+      - link colado como nicho virava um nome de 147 caracteres e travava a etapa 6 (o `maxLength` não limita valor preenchido pelo código);
+      - com saldo zero a série nascia sem o primeiro vídeo, em silêncio (`.catch(() => undefined)`);
+      - o nome sugerido perdia as maiúsculas (`toLowerCase`);
+      - o horário de publicação não dizia o fuso;
+      - sair no meio perdia tudo sem aviso;
+      - 7 segmentos de progresso para 6 etapas;
+      - seleção de faixa removida continuava contada.
+
+      Nada estoura a largura em nenhum tamanho de tela.
+    - **Correções:**
+      - `src/lib/series-form.ts` (sem React, testável): `SeriesForm`, `sectionProblem` (o motivo em palavras), `sectionValid`, `firstFormProblem` e `suggestSeriesName` (até 4 palavras e 40 caracteres, mantém maiúsculas, ignora links, não corta palavra, tira pontuação do fim). O `series-fields.tsx` reexporta;
+      - o assistente mostra o motivo embaixo do botão (`#step-problem`, ligado por `aria-describedby`), e a edição mostra o mesmo motivo no lugar de "Fill in every section";
+      - `SERIES_NICHE_MIN = 2` (API e tela);
+      - aviso na etapa 6 com saldo zero; se o primeiro vídeo der 402, a série abre com `?first=no-credits` (ou `failed`) e o detalhe mostra a explicação e limpa a URL;
+      - "Times are in `<fuso>`. You can change it in Settings." (`data-testid="timezone-hint"`);
+      - rascunho do assistente no `sessionStorage` por usuário (`reelpilot:series-draft:<id>`), restaurado com "We kept the series you were creating. Start over", apagado ao criar, e aviso do navegador ao fechar a aba com algo em andamento;
+      - barra com 6 segmentos;
+      - o `MusicPicker` descarta seleções de faixas que não existem mais.
+    - **Seletor de desenvolvimento recolhido** ("Data: Demo data"): aberto, ele cobria os botões "Back" e "Continue" em páginas curtas e travava cliques. O conjunto "Empty" agora tem saldo 0.
+    - **Estabilidade dos E2E:**
+      - um teste que gastava 60 créditos pela API sobrecarregava o servidor de desenvolvimento e derrubava outros testes; trocado pelo conjunto "Empty" mais o `?first=no-credits`;
+      - logo depois de mudanças de código, a primeira compilação de cada página com 4 testes em paralelo passava dos 15 s: `expect.timeout` foi para 30 s e foi criado o `e2e/warmup.ts` (`globalSetup`), que visita todas as páginas do painel antes da bateria;
+      - **ponto em aberto:** numa rodada sob carga, o nome da etapa 6 apareceu vazio uma vez; não se repetiu em mais de 10 rodadas (provável recarga da página pela recompilação no meio do teste).
+    - **Testes:** `src/lib/series-form.test.ts` (7) e 5 testes novos do assistente em `e2e/break-ui.spec.ts`. Resultado: typecheck ✅, lint ✅, Vitest 78/78 ✅, Playwright 38/38 ✅ duas vezes seguidas com o servidor reiniciado a frio.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.

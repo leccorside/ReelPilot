@@ -174,5 +174,7 @@ export function devMe(dataset: DevDataset): MeDto {
     };
   }
   if (dataset === "one") return { ...me, connections: [{ id: "c1", platform: "youtube", username: "@jo", status: "active" }] };
+  // Empty: nothing connected and no credits left (someone who spent the signup bonus).
+  if (dataset === "empty") return { ...me, credits: { balance: 0, allowance: 60 } };
   return me;
 }

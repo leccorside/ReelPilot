@@ -73,7 +73,7 @@ test("save stays disabled while a section is incomplete, and Cancel discards the
   await page.goto(`/dashboard/series/${id}/edit/`);
 
   await page.locator("#name").fill("");
-  await expect(page.getByText("Fill in every section to save.")).toBeVisible();
+  await expect(page.getByText("Give your series a name.")).toBeVisible(); // the exact reason, not a generic hint
   await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
 
   await page.getByRole("button", { name: /^Storytelling/ }).click(); // the only format: now none

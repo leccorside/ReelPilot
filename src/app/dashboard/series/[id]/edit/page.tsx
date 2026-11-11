@@ -19,6 +19,7 @@ import {
 } from "@/components/dashboard/series-fields";
 import { buttonClass } from "@/components/button";
 import { api, ApiError, refreshDashboard, useMe, useSeries } from "@/lib/api-client";
+import { firstFormProblem } from "@/lib/series-form";
 import type { SeriesDto } from "@/lib/api-types";
 
 const LIST_FIELDS = ["formats", "platforms", "musicTrackIds"] as const;
@@ -149,7 +150,7 @@ export default function EditSeriesPage() {
               {saveError}
             </p>
           )}
-          {!saveError && !valid && <p className="mr-auto text-sm text-muted-foreground">Fill in every section to save.</p>}
+          {!saveError && !valid && form && <p className="mr-auto text-sm text-muted-foreground">{firstFormProblem(form)}</p>}
           <Link href={`/dashboard/series/${id}/`} className={buttonClass("outline")}>
             Cancel
           </Link>

@@ -29,7 +29,7 @@ const fields = {
   niche: z
     .string()
     .trim()
-    .min(SERIES_NICHE_MIN, "Describe what the videos are about.")
+    .min(SERIES_NICHE_MIN, `Describe what the videos are about (at least ${SERIES_NICHE_MIN} characters).`)
     .max(SERIES_NICHE_MAX, `The description can have at most ${SERIES_NICHE_MAX} characters.`),
   language: z.enum(ids(LANGUAGES)),
   voice: z.enum(ids(VOICES)),

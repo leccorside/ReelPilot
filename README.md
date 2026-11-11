@@ -559,11 +559,11 @@ Executados com **Vitest**.
 .\scripts\dc.ps1 e2e
 ```
 
-Executados com **Playwright** em um container dedicado.
+Executados com **Playwright** em um container dedicado, contra o servidor de desenvolvimento. Antes da bateria, o `e2e/warmup.ts` visita todas as páginas do painel para elas já estarem compiladas.
 
 ### Dados de pior caso (só no desenvolvimento)
 
-Para testar telas com dados difíceis (nomes muito longos, listas cheias, campos vazios), o painel aceita `?data=worst`, `?data=empty`, `?data=one` ou `?data=huge` na URL, e mostra um seletor no rodapé para trocar entre eles. Os dados ficam em `src/lib/dev-data.ts` e substituem as respostas da API só no navegador; salvar nesse modo vai para a API real.
+Para testar telas com dados difíceis (nomes muito longos, listas cheias, campos vazios), o painel aceita `?data=worst`, `?data=empty` (sem contas conectadas e com saldo zero), `?data=one` ou `?data=huge` na URL, e mostra um seletor recolhido ("Data: …") no rodapé para trocar entre eles. Os dados ficam em `src/lib/dev-data.ts` e substituem as respostas da API só no navegador; salvar nesse modo vai para a API real.
 
 Essa ferramenta **não existe na build de produção**: o seletor e os dados são carregados com uma condição que o bundler descarta. Os testes `e2e/break-ui.spec.ts` usam esses dados para garantir que as telas continuam resistindo a eles.
 

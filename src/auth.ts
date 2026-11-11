@@ -1,13 +1,13 @@
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import NextAuth, { CredentialsSignin } from "next-auth";
-import type { Adapter } from "next-auth/adapters";
 import type { Provider } from "next-auth/providers";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { authConfig } from "@/auth.config";
 import { env } from "@/lib/env";
 import { clientIp, getSessionVersion, grantSignupBonus, verifyCredentials } from "@/server/accounts";
+import { hardenAdapter } from "@/server/auth-adapter";
 import { db } from "@/server/db";
 import { accounts, sessions, users, verificationTokens } from "@/server/db/schema";
 import { redis } from "@/server/redis";
@@ -34,12 +34,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
   });
-  // E-mails are stored lowercase (database check constraint).
-  const adapter: Adapter = {
-    ...base,
-    createUser: (user) => base.createUser!({ ...user, email: user.email.toLowerCase() }),
-    getUserByEmail: (email) => base.getUserByEmail!(email.toLowerCase()),
-  };
+  // Lowercase e-mails and no provider tokens in the database (see hardenAdapter).
+  const adapter = hardenAdapter(base);
 
   const providers: Provider[] = [];
   if (e.AUTH_GOOGLE_ID && e.AUTH_GOOGLE_SECRET) {
@@ -105,6 +101,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
       // Accounts created through Google get the same signup bonus as e-mail sign-ups.
       async createUser({ user }) {
         if (user.id) await grantSignupBonus(database, user.id);
+      },
+      // Records that Google verified the address (the adapter leaves email_verified empty).
+      async signIn({ user, account, profile }) {
+        if (account?.provider === "google" && profile?.email_verified === true && user.id) {
+          await database
+            .update(users)
+            .set({ emailVerified: new Date() })
+            .where(and(eq(users.id, user.id), isNull(users.emailVerified)));
+        }
       },
     },
   };

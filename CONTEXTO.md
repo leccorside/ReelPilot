@@ -106,6 +106,19 @@
       - `expect.timeout` de 15 s, porque o servidor de testes compila cada página na primeira visita.
     - **Resultado:** typecheck ✅, lint ✅, Vitest 35/35 ✅, Playwright 14/14 ✅ duas vezes seguidas, login completo na imagem de produção ✅ (cadastro, login, painel, sessão, logout).
 
+15. **Login com Google validado com conta real (2026-11-11):**
+    - **Configuração:** a pessoa criou o cliente OAuth "Web application" no Google Cloud (origem `http://localhost:3100`, retorno `http://localhost:3100/api/auth/callback/google`, app em modo de teste com o e-mail dela em Test users) e preencheu `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` no `.env`.
+    - **Primeira tentativa:** falhou com "Google sign-in isn't available yet", porque o container tinha sido criado antes. Variáveis novas no `.env` exigem recriar o container (`.\scripts\dc.ps1 up`); `restart` não basta.
+    - **Resultado no banco:** conta com provedor `google`, e-mail em minúsculas, nome e foto, sem senha e 60 créditos (`signup:<id>`).
+    - **Ajustes feitos depois da conferência:**
+      - `src/server/auth-adapter.ts` (`hardenAdapter`) descarta `access_token`, `refresh_token`, `id_token`, `expires_at` e `session_state` antes de gravar em `accounts`, porque o login não precisa deles e eles ficavam em texto puro. A publicação no YouTube terá conexão própria e cifrada (Passo 12). A linha já existente foi limpa à mão;
+      - o evento `signIn` preenche `users.email_verified` quando o Google informa `email_verified`. Isso vale a partir do próximo login com Google.
+    - **Testes:** `auth-adapter.test.ts` (2 testes). O E2E do botão do Google agora cobre os dois cenários: com o Google configurado, confere que o clique vai para `accounts.google.com` com o retorno e as permissões certas; sem configuração, mostra o aviso.
+    - **Console do navegador:**
+      - `Extra attributes from the server: cz-shortcut-listen` vem da extensão ColorZilla da pessoa;
+      - os avisos de CSP, Self-XSS e Quirks Mode são das páginas do próprio Google;
+      - nenhum dos dois é do app.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.
@@ -145,7 +158,8 @@
 
 ## Pendências
 - **Próximo: Passo 3 (API de séries, vídeos e créditos)**, aguardando autorização.
-- Testar o login com Google com credenciais reais: a pessoa precisa criar o cliente OAuth no Google Cloud (instruções no README e no `.env.example`).
+- Confirmar, no próximo login com Google, que `users.email_verified` é preenchido (o código entrou depois do primeiro login da pessoa).
+- Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 

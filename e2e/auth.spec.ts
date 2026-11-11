@@ -40,10 +40,22 @@ test.describe("sign-up and sign-in", () => {
     await expect(page).toHaveURL(/\/dashboard\/billing\/$/);
   });
 
-  test("Google sign-in explains when it is not configured", async ({ page }) => {
+  test("Google sign-in starts the OAuth flow, or explains that it is not configured", async ({ page, request }) => {
+    const providers = (await (await request.get("/api/auth/providers")).json()) as Record<string, unknown>;
     await page.goto("/login/");
-    await page.getByRole("button", { name: "Continue with Google" }).click();
-    await expect(formError(page)).toHaveText(/Google sign-in isn't available yet/);
+
+    if (providers.google) {
+      // Configured: the button sends the browser to Google with our callback address.
+      // (Signing in to a real Google account is checked by hand; see CONTEXTO.md.)
+      const toGoogle = page.waitForRequest((r) => r.url().startsWith("https://accounts.google.com/"));
+      await page.getByRole("button", { name: "Continue with Google" }).click();
+      const url = new URL((await toGoogle).url());
+      expect(url.searchParams.get("redirect_uri")).toMatch(/\/api\/auth\/callback\/google$/);
+      expect(url.searchParams.get("scope")).toBe("openid profile email");
+    } else {
+      await page.getByRole("button", { name: "Continue with Google" }).click();
+      await expect(formError(page)).toHaveText(/Google sign-in isn't available yet/);
+    }
   });
 });
 

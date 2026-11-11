@@ -1,7 +1,7 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`; o **Passo 0 (fundação) está concluído**.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. O **Passo 0 (fundação) está concluído**.
 - **Roda 100% em Docker** (`docker-compose.yml`). Na máquina só é preciso ter Docker. Serviços:
   - `web` (dev com recarga automática, http://localhost:3100);
   - `postgres` 16.6, `redis` 7.4.1;
@@ -38,6 +38,8 @@
     - Vitest (`vitest.config.ts` e 4 testes: validação de variáveis e checagem dos serviços reais), Playwright (`e2e/smoke.spec.ts` com 4 testes: página inicial, login, saúde, redirecionamento do painel e rota dinâmica da série) e ESLint (`next/core-web-vitals`);
     - dependências novas: `zod`, `postgres`, `ioredis`, `vitest`, `@playwright/test` (versão fixa igual à imagem), `eslint@8` e `eslint-config-next`.
     - **Testes:** typecheck ✅, lint ✅, Vitest 4/4 ✅, Playwright 4/4 ✅, todas as rotas com 200 ✅, recarga automática em cerca de 7 s ✅, imagem de produção saudável ✅, servidor recusa subir com variáveis inválidas ✅.
+
+12. `README.md` criado (2026-11-11): o que é o produto, stack, requisitos (só Docker), primeiros passos, comandos do `scripts/dc.ps1`, serviços do compose, estrutura, variáveis de ambiente e produção. Atualizar o README quando entrarem serviços ou comandos novos.
 
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.

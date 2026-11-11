@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR, { mutate as globalMutate } from "swr";
-import { IN_PROGRESS, type MeDto, type SeriesDto, type VideoDto } from "./api-types";
+import { IN_PROGRESS, type MeDto, type MusicTrackDto, type SeriesDto, type VideoDto } from "./api-types";
 
 // Browser side of the dashboard API: a fetch wrapper with readable errors and SWR hooks.
 
@@ -41,7 +41,27 @@ export const keys = {
   series: "/api/series/",
   seriesOne: (id: string) => `/api/series/${id}/`,
   videos: (seriesId?: string) => (seriesId ? `/api/videos/?seriesId=${seriesId}` : "/api/videos/"),
+  music: "/api/music/",
 };
+
+/** The user's music library. Playback links expire after 30 minutes, so the list refreshes every 20. */
+export function useMusic() {
+  return useSWR<MusicTrackDto[]>(keys.music, fetcher, { refreshInterval: 20 * 60 * 1000 });
+}
+
+/** Uploads one audio file as the raw request body (the server checks the content). */
+export async function uploadMusicFile(file: File): Promise<MusicTrackDto> {
+  const res = await fetch(keys.music, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) },
+    body: file,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError(body.error ?? "Upload failed. Please try again.", res.status);
+  }
+  return (await res.json()) as MusicTrackDto;
+}
 
 export function useMe() {
   return useSWR<MeDto>(keys.me, fetcher);

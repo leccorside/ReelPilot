@@ -15,7 +15,6 @@ test("the wizard creates a series and queues its first video (1 credit)", async 
   await page.getByRole("button", { name: /^Adam/ }).click();
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("note")).toContainText("Background music isn't saved yet");
   await page.getByRole("button", { name: "Continue" }).click();
 
   await page.getByRole("button", { name: "Realism" }).click();

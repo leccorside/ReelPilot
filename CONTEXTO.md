@@ -1,7 +1,11 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 (fundação), 1 (banco de dados), 2 (autenticação) e 3 (API do painel) estão concluídos**.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 4 estão concluídos**: fundação, banco, autenticação, API do painel e armazenamento de arquivos.
+- **Arquivos:**
+  - bucket S3 privado (SeaweedFS), acessado só pelo app;
+  - a música de fundo é enviada ou importada por link na etapa 3 do assistente, conferida pelos bytes e tocada por links assinados `/api/media/...`;
+  - excluir vídeo, série ou conta apaga os arquivos.
 - **Painel 100% na API** (sem `localStorage`):
   - séries, vídeos, créditos, plano, preferências e contas sociais vêm do banco, por `src/lib/api-client.ts` (SWR);
   - as regras ficam em `src/server/series.ts`, `videos.ts` e `me.ts`;
@@ -143,6 +147,36 @@
     - **Defeito encontrado pelo E2E e corrigido:** ao excluir o último vídeo, a grade trocava para "No videos yet" e desmontava o aviso "Its credit is back". Agora o aviso e os diálogos ficam sempre montados.
     - **Resultado:** typecheck ✅, lint ✅, Vitest 52/52 ✅, Playwright 20/20 ✅ duas vezes seguidas, API na imagem de produção ✅ (criar série, gerar vídeo, saldo 59, 401 sem login).
 
+17. **Passo 4 concluído (2026-11-11):**
+    - **Pacote:** `@aws-sdk/client-s3@3.1158.0` (a versão mais recente com mais de 14 dias), com `forcePathStyle` e checksums só quando exigidos (`requestChecksumCalculation/responseChecksumValidation: WHEN_REQUIRED`), porque nem todo S3 compatível entende os CRC que o SDK manda por padrão.
+    - **`src/server/storage.ts`:** `putObject`, `getObject` (com `Range`), `listKeys`, `deleteObjects` (em lotes de 1000), `deletePrefix` (recusa prefixos curtos como `users/`) e `cleanupAfterCommit` (uma falha só vai para o log).
+    - **`src/server/media-url.ts`:** links `/api/media/<chave>?exp=&sig=` com HMAC-SHA256 (chave derivada do `AUTH_SECRET`), válidos por 30 min e presos à chave do arquivo. A rota `src/app/api/media/[...key]` não exige sessão (fica fora do middleware); confere a assinatura (403 se inválida, 410 se vencida), só aceita chaves `users/...` sem `..`, devolve 206 com `Range`, e manda `nosniff` e `Cache-Control: private`.
+    - **`src/server/audio-file.ts`:** `sniffAudio` reconhece WAV (`RIFF....WAVE`), MP3 com ID3 e MP3 sem tag (cabeçalho de quadro MPEG Layer III válido); `cleanFileName`.
+    - **`src/server/safe-fetch.ts`:**
+      - `BlockList` com as faixas privadas, de loopback, link-local (metadados de nuvem), CGNAT, multicast, reservadas, IPv6 ULA e link-local, NAT64 e IPv4 mapeado em IPv6;
+      - lookup próprio usado **na conexão** (sem janela para DNS rebinding);
+      - IP literal conferido antes;
+      - só `https`, sem usuário e senha na URL, até 3 redirecionamentos conferidos, tempo-limite total de 15 s e corte em 10 MB durante a leitura;
+      - um gancho `testing` (só nos testes) libera `http` e um resolvedor local.
+    - **`src/server/music.ts`:**
+      - upload, importação, listagem e exclusão; `ownedTrackIds` impede usar faixa de outro usuário;
+      - limites de 30 envios por hora por usuário (`rl:music:user:<id>`) e 50 faixas por biblioteca;
+      - se o insert no banco falhar, o arquivo já gravado é apagado.
+    - **Erros novos:** `TooLargeError` (413) e `RateLimitedError` (429) em `errors.ts` e `withUser`.
+    - **Séries:** o campo `musicTrackIds` (até 10) é gravado na mesma transação da série; o `PATCH` substitui as faixas; `deleteSeries` devolve os ids dos vídeos para a rota apagar `users/<u>/videos/<v>/`.
+    - **Rotas:** `/api/music` (GET e POST com corpo bruto e `X-File-Name`), `/api/music/import`, `/api/music/[id]` e `/api/media/[...key]`. As exclusões de vídeo, série e conta limpam o armazenamento depois do commit.
+    - **Telas:**
+      - `src/components/dashboard/music-picker.tsx`: links importados com o botão "Import links" (os que falham ficam no campo para correção), upload na hora com indicador, erros por arquivo, biblioteca com seleção, botão de ouvir e remover com confirmação;
+      - o rótulo "TikTok Sound URLs" virou "Sound file URLs", porque páginas do TikTok não são arquivos de áudio e baixá-las exigiria raspar o site;
+      - o detalhe da série mostra a música com `<audio controls>`;
+      - `useMusic()` se atualiza a cada 20 min, antes de os links vencerem.
+    - **Testes:**
+      - `files-unit.test.ts` (8): reconhecimento de áudio, nome de arquivo, links assinados, lista de IPs bloqueados, recusa de `http`, de IP literal e de `localhost`/`postgres` resolvidos;
+      - `files-integration.test.ts` (10, com o S3 real e um servidor HTTP local): upload, arquivo falso, vazio e acima de 10 MB, limite por hora e biblioteca cheia, importação com redirecionamento, página HTML, arquivo grande sem `Content-Length`, laço de redirecionamento, 404, `https://s3:8333` recusado sem o gancho, faixa alheia recusada na série, exclusão da faixa, `deletePrefix`;
+      - `e2e/music.spec.ts` (4): assistente com WAV real e ".mp3" falso, link interno recusado, reprodução byte a byte, `Range` 206, assinatura adulterada e arquivo trocado com 403, remover faixa da biblioteca, excluir conta apaga os arquivos e upload acima de 10 MB com 413.
+    - **Conferência do bucket:** nenhum arquivo órfão de usuário apagado.
+    - **Resultado:** typecheck ✅, lint ✅, Vitest 70/70 ✅, Playwright 24/24 ✅, imagem de produção ✅ (upload, reprodução com `audio/wav`, exclusão da conta e arquivo com 404 depois).
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.
@@ -152,6 +186,8 @@
 - **Portas 3100 e 8125:** a 3000 e a 8025 são usadas pelo projeto `ajudaisocial`, que sobe junto com o Docker.
 - **Node 24 LTS** (`node:24.22.1-alpine3.24`) nas imagens; todas as imagens com versão fixada.
 - **Sessão JWT de 2 h com conferência no banco a cada minuto** (decisão da pessoa no Passo 2). Ela troca a revogação instantânea por simplicidade; o `session_version` dá o "sair de todos os dispositivos" com atraso de até 1 minuto.
+- **Upload pelo app e links assinados pelo app, em vez de URLs pré-assinadas do S3** (mudança em relação ao plano original do Passo 4). O bucket nunca fica exposto (sem porta nem CORS), o conteúdo é validado antes de gravar e tudo funciona igual no desenvolvimento e na produção. O custo é a banda passando pelo app, aceitável para músicas de até 10 MB. Para os MP4 finais, reavaliar no Passo 10.
+- **Importação só de links diretos para arquivos de áudio.** Páginas do TikTok ou do YouTube não são aceitas.
 - **404, e não 403, para registros de outro usuário** (e para ids malformados): não revela se o registro existe.
 - **Excluir vídeo na fila devolve o crédito; vídeo em produção ou pronto não.** Vídeo que falha é sempre estornado.
 - **Telas sem simulação:** o que depende de passos futuros (música, publicar, baixar, pagar, conectar redes) aparece desativado ou com aviso honesto, em vez de fingir que funciona.
@@ -184,14 +220,16 @@
   - `favicon.ico` → criado em `public/`.
 
 ## Pendências
-- **Próximo: Passo 4 (armazenamento de arquivos: música, uploads e limpeza)**, aguardando autorização.
+- **Próximo: Passo 5 (fila BullMQ e worker separado)**, aguardando autorização.
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
 - **Vídeos ficam "In queue" para sempre** até o worker (Passo 5). Não há prévia nem arquivo; Publish e Download ficam desativados.
-- A música escolhida no assistente **não é salva** até o Passo 4.
+- **Sem editor de série:** a música (e os outros campos) só se escolhe na criação. A API já aceita `PATCH` com `musicTrackIds`, mas ainda não há tela de edição.
+- **Arquivos órfãos possíveis:** se o armazenamento falhar ao excluir (vídeo, série, conta ou faixa), os arquivos ficam no bucket (o erro vai para o log). Uma varredura periódica entra com o agendador ou a manutenção (Passos 11/18).
+- **Duração da música não é calculada** (`duration_ms` fica vazio). O ffprobe preenche no Passo 9.
 - A lista de vídeos mostra os 100 mais recentes (sem paginação ainda).
 - A prévia de voz no assistente ainda usa a voz do navegador (o Kokoro entra no Passo 7).
 - **Sem verificação de e-mail nem recuperação de senha** até o Passo 16 (e-mails).

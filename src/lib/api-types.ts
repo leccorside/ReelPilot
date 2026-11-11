@@ -33,9 +33,23 @@ export type SeriesDto = {
   postTime: string;
   timezone: string;
   status: "active" | "paused";
+  /** Background music of the series (details in GET /api/music). */
+  musicTrackIds: string[];
   createdAt: string;
   videoCount: number;
   publishedCount: number;
+};
+
+export type MusicTrackDto = {
+  id: string;
+  name: string;
+  source: "upload" | "url";
+  sourceUrl: string | null;
+  sizeBytes: number;
+  mimeType: string;
+  createdAt: string;
+  /** Signed, short-lived link for playback (/api/media/...). */
+  url: string;
 };
 
 export type VideoDto = {

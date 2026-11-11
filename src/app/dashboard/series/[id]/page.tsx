@@ -8,7 +8,7 @@ import { DashboardShell } from "@/components/dashboard/shell";
 import { Badge, Card, CardHeader, fmtDate, Toast } from "@/components/dashboard/ui";
 import { VideoGrid } from "@/components/dashboard/video-grid";
 import { buttonClass } from "@/components/button";
-import { api, ApiError, refreshDashboard, useMe, useSeries } from "@/lib/api-client";
+import { api, ApiError, refreshDashboard, useMe, useMusic, useSeries } from "@/lib/api-client";
 import type { SeriesDto } from "@/lib/api-types";
 import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, LANGUAGES, optionName, PLATFORMS, VOICES } from "@/lib/options";
 
@@ -16,6 +16,8 @@ export default function SeriesDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: s, error, isLoading, mutate } = useSeries(id);
   const { data: me } = useMe();
+  const { data: library } = useMusic();
+  const music = (library ?? []).filter((t) => s?.musicTrackIds.includes(t.id));
   const [busy, setBusy] = useState<"status" | "generate" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -93,7 +95,7 @@ export default function SeriesDetailPage() {
                 ["Language & voice", `${optionName(LANGUAGES, s.language)} · ${optionName(VOICES, s.voice)}`],
                 ["Art style", optionName(ART_STYLES, s.artStyle)],
                 ["Captions", optionName(CAPTION_STYLES, s.captionStyle)],
-                ["Background music", "None yet"],
+                ["Background music", s.musicTrackIds.length ? `${s.musicTrackIds.length} track(s)` : "None"],
                 ["Posting", `${optionName(FREQUENCIES, s.frequency)} at ${s.postTime} (${s.timezone})`],
                 ["Platforms", s.platforms.map((p) => optionName(PLATFORMS, p)).join(", ") || "None"],
               ].map(([k, v]) => (
@@ -103,6 +105,19 @@ export default function SeriesDetailPage() {
                 </div>
               ))}
             </dl>
+            {music.length > 0 && (
+              <div className="px-6 pb-6 space-y-2">
+                <p className="text-sm text-muted-foreground">Music</p>
+                <ul className="space-y-2" aria-label="Background music">
+                  {music.map((t) => (
+                    <li key={t.id} className="flex flex-col gap-2 rounded-md border px-3 py-2 sm:flex-row sm:items-center">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{t.name}</span>
+                      <audio controls preload="none" src={t.url} className="h-9 w-full sm:w-72" aria-label={`Play ${t.name}`} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="px-6 pb-6">
               <Badge tone={s.status === "active" ? "green" : "gray"}>{s.status === "active" ? "Active" : "Paused"}</Badge>
             </div>

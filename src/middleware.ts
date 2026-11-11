@@ -47,6 +47,7 @@ export default function middleware(req: NextRequest, event: NextFetchEvent) {
 // Public API routes stay out of the middleware entirely. For /api/auth this also matters for
 // correctness: the middleware re-issues the session cookie, and that copy would overwrite the
 // cookie Auth.js clears on sign-out or replaces on session update.
+// /api/media is public too: its links carry their own signature (src/server/media-url.ts).
 export const config = {
-  matcher: ["/((?!_next/|api/auth(?:/|$)|api/health(?:/|$)|api/register(?:/|$)).*)"],
+  matcher: ["/((?!_next/|api/auth(?:/|$)|api/health(?:/|$)|api/register(?:/|$)|api/media(?:/|$)).*)"],
 };

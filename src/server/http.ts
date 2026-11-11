@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { InsufficientCreditsError, NotFoundError, ValidationError } from "@/server/errors";
+import { InsufficientCreditsError, NotFoundError, RateLimitedError, TooLargeError, ValidationError } from "@/server/errors";
 
 /** Id of the signed-in user (session checked against the database), or null. */
 export async function currentUserId(): Promise<string | null> {
@@ -29,7 +29,8 @@ export function json(data: unknown, status = 200) {
 
 /**
  * Runs a route body for the signed-in user and turns domain errors into HTTP answers:
- * ValidationError → 400, NotFoundError → 404, InsufficientCreditsError → 402.
+ * ValidationError → 400, InsufficientCreditsError → 402, NotFoundError → 404, TooLargeError → 413,
+ * RateLimitedError → 429.
  */
 export async function withUser(handler: (userId: string) => Promise<Response>): Promise<Response> {
   const userId = await currentUserId();
@@ -40,6 +41,8 @@ export async function withUser(handler: (userId: string) => Promise<Response>): 
     if (e instanceof ValidationError) return jsonError(400, e.message);
     if (e instanceof NotFoundError) return jsonError(404, e.message);
     if (e instanceof InsufficientCreditsError) return jsonError(402, e.message);
+    if (e instanceof TooLargeError) return jsonError(413, e.message);
+    if (e instanceof RateLimitedError) return jsonError(429, e.message);
     throw e;
   }
 }

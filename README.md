@@ -432,6 +432,11 @@ reelpilot/
 | `src/server/series.ts` | Séries: validação contra as opções do assistente e acesso só do dono |
 | `src/server/videos.ts` | Vídeos e créditos: débito com trava por usuário, estornos |
 | `src/server/me.ts` | Conta: plano, saldo, preferências e contas sociais |
+| `src/server/storage.ts` | Armazenamento S3: gravar, ler, listar e apagar arquivos e pastas |
+| `src/server/music.ts` | Biblioteca de música: upload, importação por link, exclusão |
+| `src/server/audio-file.ts` | Reconhece MP3 e WAV pelos bytes do arquivo |
+| `src/server/safe-fetch.ts` | Download de links digitados pelo usuário com proteção contra SSRF |
+| `src/server/media-url.ts` | Links assinados e de validade curta para os arquivos |
 | `src/auth.ts` | Configuração completa do Auth.js (provedores, sessão JWT, conferência no banco) |
 | `src/auth.config.ts` | Parte da configuração que roda no Edge (usada pelo middleware) |
 | `src/middleware.ts` | Protege `/dashboard` e a API privada; adiciona a barra final às URLs de páginas |
@@ -490,6 +495,21 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | `GET /api/videos?seriesId=` | Vídeos do usuário (os 100 mais recentes), opcionalmente de uma série |
 | `GET` / `DELETE /api/videos/:id` | Detalhe e exclusão |
 | `DELETE /api/social-connections/:id` | Desconecta uma rede social |
+| `GET /api/music` | Biblioteca de música do usuário, com links de reprodução assinados |
+| `POST /api/music` | Envia um MP3 ou WAV (até 10 MB) como corpo da requisição; nome original no cabeçalho `X-File-Name` |
+| `POST /api/music/import` | Importa `{ url }` de um MP3/WAV (só `https`, até 10 MB) |
+| `DELETE /api/music/:id` | Remove a faixa da biblioteca, das séries e do armazenamento |
+| `GET /api/media/<arquivo>?exp=&sig=` | Entrega um arquivo por link assinado (sem login; o link é a permissão), com suporte a `Range` |
+
+Os campos das séries incluem `musicTrackIds` (até 10 faixas da própria biblioteca).
+
+### Arquivos
+
+- **Bucket privado:** fica dentro da rede do Docker e nunca é exposto. O navegador envia e recebe arquivos pelo app.
+- **Upload:** o servidor confere o conteúdo real (bytes de MP3 ou WAV, não a extensão) e o tamanho antes de gravar. Respostas: `413` acima de 10 MB e `429` acima de 30 envios por hora.
+- **Importação por link:** só `https`. O endereço é resolvido na hora da conexão e recusado se apontar para a rede interna (127.x, 10.x, 192.168.x, 169.254.169.254, serviços do Docker...). Redirecionamentos são conferidos e o download para em 10 MB.
+- **Links de reprodução:** valem 30 minutos e só para o arquivo para o qual foram gerados.
+- **Pastas:** `users/<usuário>/music/...` e `users/<usuário>/videos/<vídeo>/...`. Excluir um vídeo, uma série ou a conta apaga os arquivos correspondentes.
 
 ### Regras de créditos
 
@@ -613,7 +633,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 
 - [x] Persistência real dos dados do painel
 - [x] Gerenciamento das séries (criar, pausar, retomar, excluir)
-- [ ] Música de fundo (upload e importação) — Passo 4
+- [x] Música de fundo (upload e importação) e armazenamento privado — Passo 4
 - [ ] Filas e processamento assíncrono — Passo 5
 - [ ] Integração com provedores de roteiro
 - [ ] Geração local de narração

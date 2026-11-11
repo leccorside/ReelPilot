@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, ChevronRight, Loader2, Play, Square, Upload, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Loader2, Play, Square } from "lucide-react";
 import { DashboardShell } from "@/components/dashboard/shell";
+import { MusicPicker } from "@/components/dashboard/music-picker";
 import { Scene } from "@/components/art";
 import { buttonClass } from "@/components/button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "@/components/icons";
@@ -53,17 +54,14 @@ export default function CreateSeriesPage() {
   const router = useRouter();
   const { data: me } = useMe();
   const connected = (platform: string) => me?.connections.find((c) => c.platform === platform && c.status === "active")?.username;
-  const fileInput = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(0);
   const [formats, setFormats] = useState<string[]>([]);
   const [niche, setNiche] = useState("");
   const [language, setLanguage] = useState("en");
   const [voice, setVoice] = useState("");
   const [previewing, setPreviewing] = useState<string | null>(null);
-  const [urls, setUrls] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
+  const [musicIds, setMusicIds] = useState<string[]>([]);
+  const [musicBusy, setMusicBusy] = useState(false);
   const [art, setArt] = useState("");
   const [caption, setCaption] = useState("");
   const [name, setName] = useState("");
@@ -76,7 +74,7 @@ export default function CreateSeriesPage() {
   const canContinue = [
     formats.length > 0 && niche.trim().length >= 3,
     !!voice,
-    true,
+    !musicBusy,
     !!art,
     !!caption,
     name.trim().length > 0,
@@ -101,18 +99,6 @@ export default function CreateSeriesPage() {
     window.speechSynthesis.speak(u);
   };
 
-  const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    setFileError(null);
-    const ok: string[] = [];
-    Array.from(list).forEach((f) => {
-      if (!/\.(mp3|wav)$/i.test(f.name)) setFileError(`${f.name} is not an MP3 or WAV file`);
-      else if (f.size > 10 * 1024 * 1024) setFileError(`${f.name} is larger than 10MB`);
-      else ok.push(f.name);
-    });
-    setFiles((prev) => Array.from(new Set([...prev, ...ok])));
-  };
-
   const next = () => {
     if (!canContinue) return;
     if (step === 0 && !name) setName(niche.split(/\s+/).slice(0, 3).join(" ").toLowerCase());
@@ -129,10 +115,21 @@ export default function CreateSeriesPage() {
     setSaveError(null);
     let created: SeriesDto;
     try {
-      // Background music is stored from Passo 4 (file storage) on; the series is created without it for now.
       created = await api<SeriesDto>("/api/series/", {
         method: "POST",
-        body: { name: name.trim(), formats, niche: niche.trim(), language, voice, artStyle: art, captionStyle: caption, platforms, frequency, postTime: time },
+        body: {
+          name: name.trim(),
+          formats,
+          niche: niche.trim(),
+          language,
+          voice,
+          musicTrackIds: musicIds,
+          artStyle: art,
+          captionStyle: caption,
+          platforms,
+          frequency,
+          postTime: time,
+        },
       });
     } catch (e) {
       setSaveError(e instanceof ApiError ? e.message : "Could not create the series. Please try again.");
@@ -243,53 +240,7 @@ export default function CreateSeriesPage() {
         {step === 2 && (
           <div className="space-y-6">
             <p className="text-sm text-muted-foreground">Add background music to your video</p>
-            <p role="note" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Background music isn&apos;t saved yet: it arrives with the next update. For now your series is created without music.
-            </p>
-            <div className="space-y-3">
-              <label htmlFor="urls" className={label}>
-                TikTok Sound URLs
-              </label>
-              <textarea id="urls" rows={4} className={field} placeholder="Enter TikTok sound URLs, one per line" value={urls} onChange={(e) => setUrls(e.target.value)} onBlur={(e) => setUrls(e.target.value)} />
-            </div>
-            <div className="space-y-3">
-              <p className={label}>Upload Sound Files</p>
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragging(true);
-                }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragging(false);
-                  addFiles(e.dataTransfer.files);
-                }}
-                className={`flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-8 text-sm transition-colors ${
-                  dragging ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40"
-                }`}
-              >
-                <Upload className="mb-1 h-6 w-6" />
-                <span className="font-medium">Click to upload sound files or drag and drop</span>
-                <span className="text-muted-foreground">MP3, WAV up to 10MB</span>
-              </button>
-              <input ref={fileInput} type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" multiple hidden onChange={(e) => addFiles(e.target.files)} />
-              {fileError && <p className="text-xs text-destructive">{fileError}</p>}
-              {files.length > 0 && (
-                <ul className="space-y-2">
-                  {files.map((f) => (
-                    <li key={f} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-                      <span className="truncate">{f}</span>
-                      <button type="button" aria-label={`Remove ${f}`} onClick={() => setFiles(files.filter((x) => x !== f))}>
-                        <X className="h-4 w-4 text-muted-foreground" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <MusicPicker selected={musicIds} onChange={setMusicIds} onBusyChange={setMusicBusy} />
           </div>
         )}
 

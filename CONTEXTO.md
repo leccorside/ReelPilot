@@ -30,7 +30,7 @@
 - `GET /api/health/` confere o banco, o Redis e o S3 (200 ou 503). É o healthcheck do container `web`.
 - As variáveis de ambiente são validadas com zod (`src/lib/env.ts`) na inicialização (`src/instrumentation.ts`). Se faltar alguma, o servidor não sobe e lista os problemas. Segredos só no `.env` (fora do git); o modelo está no `.env.example`.
 - Páginas públicas: `/`, `/login`, `/contact`, `/privacy`, `/tos`, `/refund`, `/cancellation-policy`, `/affiliate-tos`.
-- Painel: `/dashboard` (redireciona no servidor para séries), `/dashboard/series`, `/dashboard/series/[id]/`, `/dashboard/create` (assistente de 6 etapas), `/dashboard/videos`, `/dashboard/settings`, `/dashboard/billing`.
+- Painel: `/dashboard` (redireciona no servidor para séries), `/dashboard/series`, `/dashboard/series/[id]/`, `/dashboard/series/[id]/edit/` (edição de todos os campos), `/dashboard/create` (assistente de 6 etapas), `/dashboard/videos`, `/dashboard/settings`, `/dashboard/billing`.
 - O painel **ainda** usa os dados simulados no navegador (`src/lib/store.ts`, localStorage). A troca pela API real é o Passo 3.
 - Repositório git em `app/` (branch `main`), ainda **sem commits**: o primeiro commit é da pessoa. Os registros da ferramenta de captura (`capture/`, `checks/`, `agent-session.jsonl`...) ficam na pasta-mãe, fora do repositório.
 - Tema: primária `hsl(265 89% 50%)` (#6d0ef1), texto #09090b, cinza #736a81, borda #e5e3e8, `--radius: 0.75rem`, Inter (corpo) e DM Sans (títulos), container 1400px.
@@ -177,6 +177,22 @@
     - **Conferência do bucket:** nenhum arquivo órfão de usuário apagado.
     - **Resultado:** typecheck ✅, lint ✅, Vitest 70/70 ✅, Playwright 24/24 ✅, imagem de produção ✅ (upload, reprodução com `audio/wav`, exclusão da conta e arquivo com 404 depois).
 
+18. **Tela de edição de série (2026-11-11, pedido da pessoa):**
+    - **`src/components/dashboard/series-fields.tsx`:** os blocos do assistente viraram componentes compartilhados:
+      - `FormatsNicheFields`, `LanguageVoiceFields` (com a prévia de voz), `ArtStyleField`, `CaptionStyleField` e `ScheduleFields` (fuso opcional);
+      - o tipo `SeriesForm`, `emptySeriesForm`, `formFromSeries` e `sectionValid`, com as mesmas regras da API.
+    - **Assistente:** `create/page.tsx` foi reescrito sobre esses blocos, com o mesmo visual e comportamento. O fuso não é enviado na criação; vale o da conta.
+    - **`/dashboard/series/[id]/edit/`:**
+      - todos os blocos em cartões, com a música pelo `MusicPicker` e o fuso da série;
+      - envia ao `PATCH` só os campos alterados (listas comparadas como conjuntos);
+      - "Save changes" fica desativado sem mudanças, com seção inválida ("Fill in every section to save.") ou com upload em andamento;
+      - barra de salvar fixa no rodapé, aviso do navegador ao sair com alterações não salvas e nota de que as mudanças valem para os próximos vídeos;
+      - série de outra conta mostra "doesn't exist" (a API devolve 404).
+    - **Detalhe da série:** ganhou o botão "Edit" e o aviso "Changes saved" ao voltar (`?saved=1`, que é limpo da URL). `TIMEZONES` foi para `options.ts`, compartilhado com os ajustes.
+    - **Falha intermitente encontrada (1 em 4 rodadas completas do E2E):** o assistente e a edição esperavam `refreshDashboard()` (recarregar saldo, séries, vídeos e música) antes de navegar. Com o servidor ocupado, a navegação atrasava. Agora a atualização roda em paralelo, porque a página seguinte já busca os próprios dados.
+    - **Testes:** `e2e/edit-series.spec.ts` (3): editar todos os campos (formato, nicho, idioma, voz, upload de música nova e retirada da antiga, arte, legenda, nome, plataforma, frequência, horário e fuso), conferindo pela tela e pela API; salvar desativado com seção incompleta e "Cancel" descartando; série de outra conta.
+    - **Resultado:** typecheck ✅, lint ✅, Vitest 70/70 ✅, Playwright 27/27 ✅ em 3 rodadas completas seguidas depois da correção, build de produção ✅.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.
@@ -227,7 +243,6 @@
 
 ## Limitações conhecidas
 - **Vídeos ficam "In queue" para sempre** até o worker (Passo 5). Não há prévia nem arquivo; Publish e Download ficam desativados.
-- **Sem editor de série:** a música (e os outros campos) só se escolhe na criação. A API já aceita `PATCH` com `musicTrackIds`, mas ainda não há tela de edição.
 - **Arquivos órfãos possíveis:** se o armazenamento falhar ao excluir (vídeo, série, conta ou faixa), os arquivos ficam no bucket (o erro vai para o log). Uma varredura periódica entra com o agendador ou a manutenção (Passos 11/18).
 - **Duração da música não é calculada** (`duration_ms` fica vazio). O ffprobe preenche no Passo 9.
 - A lista de vídeos mostra os 100 mais recentes (sem paginação ainda).

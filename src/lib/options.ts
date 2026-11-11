@@ -61,6 +61,9 @@ export const FREQUENCIES = [
 
 export type FrequencyId = (typeof FREQUENCIES)[number]["id"];
 
+/** Time zones offered in the dashboard (any valid IANA zone is accepted by the API). */
+export const TIMEZONES = ["UTC", "America/New_York", "America/Los_Angeles", "America/Sao_Paulo", "Europe/London", "Europe/Prague", "Asia/Kolkata", "Asia/Tokyo"];
+
 /** Name of an option by id (falls back to the id itself). */
 export function optionName(list: readonly { id: string; name: string }[], id: string): string {
   return list.find((x) => x.id === id)?.name ?? id;

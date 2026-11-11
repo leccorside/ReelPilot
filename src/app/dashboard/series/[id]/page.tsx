@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useParams } from "next/navigation";
-import { Loader2, Pause, Play, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { Loader2, Pause, Pencil, Play, Sparkles } from "lucide-react";
 import { DashboardShell } from "@/components/dashboard/shell";
 import { Badge, Card, CardHeader, fmtDate, Toast } from "@/components/dashboard/ui";
 import { VideoGrid } from "@/components/dashboard/video-grid";
@@ -20,6 +20,15 @@ export default function SeriesDetailPage() {
   const music = (library ?? []).filter((t) => s?.musicTrackIds.includes(t.id));
   const [busy, setBusy] = useState<"status" | "generate" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const router = useRouter();
+
+  // Coming back from the edit page (?saved=1): confirm, then clean the address.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("saved") === "1") {
+      setToast("Changes saved");
+      router.replace(`/dashboard/series/${id}/`);
+    }
+  }, [id, router]);
 
   const toggleStatus = async () => {
     if (!s) return;
@@ -74,6 +83,9 @@ export default function SeriesDetailPage() {
               description={`Created ${fmtDate(Date.parse(s.createdAt))} · ${s.status === "active" ? "Posting automatically" : "Paused"}`}
             >
               <div className="flex flex-wrap gap-2">
+                <Link href={`/dashboard/series/${s.id}/edit/`} className={buttonClass("outline", "sm")}>
+                  <Pencil className="h-4 w-4" /> Edit
+                </Link>
                 <button className={buttonClass("outline", "sm")} disabled={busy !== null} onClick={toggleStatus}>
                   {s.status === "active" ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                   {s.status === "active" ? "Pause" : "Resume"}

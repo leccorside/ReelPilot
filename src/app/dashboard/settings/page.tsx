@@ -9,12 +9,11 @@ import { buttonClass } from "@/components/button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "@/components/icons";
 import { api, ApiError, useMe } from "@/lib/api-client";
 import type { MeDto } from "@/lib/api-types";
-import { PLATFORMS } from "@/lib/options";
+import { PLATFORMS, TIMEZONES } from "@/lib/options";
 
 const ICONS = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: YoutubeIcon } as const;
 const field =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-60";
-const TIMEZONES = ["UTC", "America/New_York", "America/Los_Angeles", "America/Sao_Paulo", "Europe/London", "Europe/Prague", "Asia/Kolkata", "Asia/Tokyo"];
 
 type Prefs = Partial<Pick<MeDto["user"], "name" | "timezone" | "emailNotifications" | "autoPublish">>;
 

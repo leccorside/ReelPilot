@@ -430,6 +430,8 @@ reelpilot/
 | `src/server/password.ts` | Hash de senha com argon2id |
 | `src/server/rate-limit.ts` | Contadores de tentativas no Redis |
 | `src/server/series.ts` | Séries: validação contra as opções do assistente e acesso só do dono |
+| `src/components/dashboard/series-fields.tsx` | Campos da série, compartilhados pelo assistente de criação e pela tela de edição |
+| `src/components/dashboard/music-picker.tsx` | Escolha da música: upload, importação por link e biblioteca |
 | `src/server/videos.ts` | Vídeos e créditos: débito com trava por usuário, estornos |
 | `src/server/me.ts` | Conta: plano, saldo, preferências e contas sociais |
 | `src/server/storage.ts` | Armazenamento S3: gravar, ler, listar e apagar arquivos e pastas |
@@ -632,7 +634,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 ### Aplicação e processamento
 
 - [x] Persistência real dos dados do painel
-- [x] Gerenciamento das séries (criar, pausar, retomar, excluir)
+- [x] Gerenciamento das séries (criar, editar todos os campos e a música, pausar, retomar, excluir)
 - [x] Música de fundo (upload e importação) e armazenamento privado — Passo 4
 - [ ] Filas e processamento assíncrono — Passo 5
 - [ ] Integração com provedores de roteiro

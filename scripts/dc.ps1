@@ -31,8 +31,23 @@ Set-Location (Split-Path $PSScriptRoot -Parent)
 $prod = @("-f", "docker-compose.yml", "-f", "docker-compose.prod.yml")
 
 function Invoke-Docker([string[]]$DockerArgs) {
-  & docker @DockerArgs
+  # Docker writes progress ("Container … Running") to stderr. In Windows PowerShell 5.1, with
+  # ErrorActionPreference "Stop", that becomes a terminating error, so success is judged by the
+  # exit code only.
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & docker @DockerArgs 2>&1 | ForEach-Object { "$_" }
+  } finally {
+    $ErrorActionPreference = $previous
+  }
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+# Each E2E run creates ~35 accounts from the same IP: clear the development rate-limit counters
+# (sign-in, sign-up, music uploads) first so repeated runs don't hit the limits.
+function Reset-RateLimits {
+  Invoke-Docker @("compose", "exec", "-T", "redis", "sh", "-c", 'redis-cli --scan --pattern "rl:*" | xargs -r redis-cli del > /dev/null')
 }
 
 switch ($Command) {
@@ -41,13 +56,14 @@ switch ($Command) {
   "logs"       { Invoke-Docker (@("compose", "logs", "-f", "--tail", "200") + $Rest) }
   "ps"         { Invoke-Docker @("compose", "ps") }
   "test"       { Invoke-Docker (@("compose", "run", "--rm", "--no-deps", "web", "npm", "test", "--") + $Rest) }
-  "e2e"        { Invoke-Docker (@("compose", "--profile", "test", "run", "--rm", "e2e", "npx", "playwright", "test") + $Rest) }
+  "e2e"        { Reset-RateLimits; Invoke-Docker (@("compose", "--profile", "test", "run", "--rm", "e2e", "npx", "playwright", "test") + $Rest) }
   "lint"       { Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npm", "run", "lint") }
   "typecheck"  { Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npm", "run", "typecheck") }
   "check"      {
     Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npm", "run", "typecheck")
     Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npm", "run", "lint")
     Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npm", "test")
+    Reset-RateLimits
     Invoke-Docker @("compose", "--profile", "test", "run", "--rm", "e2e", "npx", "playwright", "test")
   }
   "migrate"    { Invoke-Docker @("compose", "run", "--rm", "migrate") }

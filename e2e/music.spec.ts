@@ -19,7 +19,7 @@ test("music uploaded in the wizard is saved with the series and plays back", asy
     { name: "calm-piano.wav", mimeType: "audio/wav", buffer: Buffer.from(makeWav(8000)) },
     { name: "fake.mp3", mimeType: "audio/mpeg", buffer: Buffer.from("not really an mp3 file, just text") },
   ]);
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("fake.mp3: This isn't an MP3 or WAV file.");
+  await expect(page.getByTestId("file-errors")).toContainText("fake.mp3: This isn't an MP3 or WAV file.");
   const library = page.getByRole("list", { name: "Your music" });
   await expect(library.getByRole("listitem")).toHaveCount(1);
   await expect(library).toContainText("calm-piano.wav");
@@ -28,7 +28,9 @@ test("music uploaded in the wizard is saved with the series and plays back", asy
   // Links to our own network are refused by the server.
   await page.locator("#urls").fill("https://localhost/secret.mp3");
   await page.getByRole("button", { name: "Import links" }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("isn't allowed");
+  await expect(page.getByTestId("link-errors")).toContainText("isn't allowed");
+  // Each error stays next to its own action: the upload error is still there.
+  await expect(page.getByTestId("file-errors")).toContainText("fake.mp3");
   await expect(page.locator("#urls")).toHaveValue("https://localhost/secret.mp3"); // kept for correction
 
   await page.getByRole("button", { name: "Continue" }).click();

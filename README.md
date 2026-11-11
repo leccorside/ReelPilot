@@ -310,7 +310,7 @@ Instale pacotes diretamente no container:
 | Comando | Descrição |
 |---|---|
 | `.\scripts\dc.ps1 test` | Executa os testes com Vitest (os testes de banco usam um banco `_test` recriado do zero a cada execução) |
-| `.\scripts\dc.ps1 e2e` | Executa os testes Playwright |
+| `.\scripts\dc.ps1 e2e` | Executa os testes Playwright (zera antes os contadores de tentativas do Redis de desenvolvimento, porque cada rodada cria várias contas) |
 | `.\scripts\dc.ps1 check` | Executa lint, verificação de tipos e testes |
 
 ### Produção
@@ -560,6 +560,12 @@ Executados com **Vitest**.
 ```
 
 Executados com **Playwright** em um container dedicado.
+
+### Dados de pior caso (só no desenvolvimento)
+
+Para testar telas com dados difíceis (nomes muito longos, listas cheias, campos vazios), o painel aceita `?data=worst`, `?data=empty`, `?data=one` ou `?data=huge` na URL, e mostra um seletor no rodapé para trocar entre eles. Os dados ficam em `src/lib/dev-data.ts` e substituem as respostas da API só no navegador; salvar nesse modo vai para a API real.
+
+Essa ferramenta **não existe na build de produção**: o seletor e os dados são carregados com uma condição que o bundler descarta. Os testes `e2e/break-ui.spec.ts` usam esses dados para garantir que as telas continuam resistindo a eles.
 
 ### Validação completa
 

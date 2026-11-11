@@ -196,7 +196,26 @@
 19. **break-ui na tela de edição (2026-11-11):**
     - **Ferramenta só de desenvolvimento:** os conjuntos de pior caso estão em `src/lib/dev-data.ts` (worst, empty, one, huge) e entram pelos hooks `useMe`/`useSeries`/`useMusic` com `?data=`. O `src/components/dashboard/dev-data-toggle.tsx` é o seletor no rodapé, que só aparece fora da produção e recarrega a página com o conjunto escolhido.
     - **Capturas temporárias** em `e2e-shots/` (fora da bateria de testes): 1280, 768 e 320 px e zoom de 200%.
-    - **Relatório entregue à pessoa; correções aguardando a escolha dela.** Principais achados:
+    - **Correções aplicadas (`fix all`), com as recomendações nas 3 decisões:**
+      1. "Post to" com `grid-cols-1` (que equivale a `minmax(0,1fr)`) e `min-w-0`: em 320 px a página voltou de 591 para 320 px;
+      2. e 3. listas de formatos e vozes sem altura fixa, para a escolha nunca ficar escondida;
+      4. nome da faixa em até 2 linhas, com `overflow-wrap:anywhere` e `title`; no celular os botões de ouvir e remover ficam abaixo do nome (cerca de 190 px de nome contra 96);
+      5. contador "N/10 selected", caixas desativadas ao chegar em 10 e envio novo só é marcado se houver espaço;
+      6. `maxLength` de 80 no nome e de 1000 no nicho, contador "N/1,000", mensagens próprias na API ("The series name can have at most 80 characters.") e os limites compartilhados em `src/lib/limits.ts`;
+      7. conexão expirada mostra o usuário e "Reconnect needed" numa linha própria, em âmbar;
+      8. erros de link e de upload separados (`data-testid` `link-errors`/`file-errors`), cada um junto da sua ação;
+      9. "Uploading …" com `min-w-0` e quebra de linha;
+      10. `cleanFileName` preserva a extensão ao encurtar e conta caracteres, não unidades UTF-16 (emoji inteiros);
+      11. na trilha de navegação, o primeiro item e o último de trilhas com 3+ itens não encolhem; só o nome do registro é cortado (com `title`);
+      12. biblioteca recolhida: as selecionadas primeiro, até 8 linhas, e "Show all N tracks". As linhas visíveis ficam fixas ao marcar e desmarcar, para nada pular.
+    - **Regressão permanente:** `e2e/break-ui.spec.ts` (6 testes sobre os dados de desenvolvimento). Ficou fixado: largura em 320 px, "Edit" visível, seleções fora de caixas roláveis, nome da faixa com mais de 160 px e com extensão, limite de 10 e "Show all 50 tracks", "Reconnect needed", `maxLength` e mensagem da API.
+    - **A ferramenta fica fora da produção:** `api-client.ts` e `shell.tsx` carregam `dev-data`/`dev-data-toggle` com `require` sob `process.env.NODE_ENV === "production" ? null : …`. Conferido na imagem: nenhum texto dos dados de pior caso em `.next/static` nem em `.next/server`. A primeira versão, com `import` estático, levava os dados para o pacote mesmo sem renderizar.
+    - **Encontrados de passagem e corrigidos no `scripts/dc.ps1`:**
+      - com `$ErrorActionPreference = "Stop"`, o stderr do docker ("Container … Running") virava erro fatal no Windows PowerShell 5.1; o `Invoke-Docker` agora julga só pelo código de saída;
+      - `e2e` e `check` zeram os contadores `rl:*` do Redis de desenvolvimento antes de rodar, porque cada rodada cria cerca de 35 contas do mesmo IP e várias seguidas estouravam o limite de cadastros.
+    - **`e2e-shots/` (capturas temporárias) foi removido,** como combinado.
+    - **Resultado:** typecheck ✅, lint ✅, Vitest 71/71 ✅, Playwright 33/33 ✅ (três rodadas completas), produção sem a ferramenta ✅.
+    - **Achados do relatório (antes das correções):**
       - em 320 px a página fica com 591 px de largura por causa do nome longo do canal do YouTube em "Post to";
       - formato e voz selecionados ficam escondidos nas listas roláveis;
       - nomes de faixa ilegíveis no celular;

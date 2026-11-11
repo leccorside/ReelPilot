@@ -27,9 +27,18 @@ export function sniffAudio(bytes: Uint8Array): AudioKind | null {
   return null;
 }
 
-/** A safe display name: no folders, no control characters, at most 120 characters. */
+export const MAX_FILE_NAME = 120;
+
+/**
+ * A safe display name: no folders, no control characters, at most 120 characters.
+ * Long names are shortened before the extension, so "…Extended 1 Hour Mix.mp3" keeps its ".mp3".
+ */
 export function cleanFileName(raw: string | null | undefined, fallback: string): string {
   const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
-  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 120);
-  return cleaned || fallback;
+  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!cleaned) return fallback;
+  const chars = Array.from(cleaned); // count characters, not UTF-16 units (emoji stay whole)
+  if (chars.length <= MAX_FILE_NAME) return cleaned;
+  const ext = cleaned.match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? "";
+  return chars.slice(0, MAX_FILE_NAME - ext.length).join("").trimEnd() + ext;
 }

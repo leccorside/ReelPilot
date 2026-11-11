@@ -1,22 +1,39 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Play, Square, Trash2, Upload } from "lucide-react";
 import { buttonClass } from "../button";
 import { Confirm } from "./ui";
 import { api, ApiError, uploadMusicFile, useMusic } from "@/lib/api-client";
 import type { MusicTrackDto } from "@/lib/api-types";
+import { MAX_TRACKS_PER_SERIES } from "@/lib/limits";
 
 const label = "text-sm font-medium leading-none";
 const field =
   "flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 const MAX_BYTES = 10 * 1024 * 1024;
+/** Rows shown before "Show all N tracks" (selected tracks are always among them). */
+const COLLAPSED_ROWS = 8;
 
 const sizeLabel = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
+function ErrorList({ errors, testId }: { errors: string[]; testId: string }) {
+  if (errors.length === 0) return null;
+  return (
+    <ul role="alert" data-testid={testId} className="space-y-1 text-xs text-destructive">
+      {errors.map((e) => (
+        // overflow-wrap: anywhere — long links and file names have no spaces to break at.
+        <li key={e} className="[overflow-wrap:anywhere]">
+          {e}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
  * Background music of a series: upload files or import direct links into the user's library,
- * then pick which library tracks the series uses.
+ * then pick which library tracks the series uses (up to MAX_TRACKS_PER_SERIES).
  */
 export function MusicPicker({
   selected,
@@ -33,24 +50,42 @@ export function MusicPicker({
   const [urls, setUrls] = useState("");
   const [uploading, setUploading] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
-  const [errors, setErrors] = useState<string[]>([]);
+  // Separate lists, each shown next to the action that produced it (break-ui #8).
+  const [linkErrors, setLinkErrors] = useState<string[]>([]);
+  const [fileErrors, setFileErrors] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const [playing, setPlaying] = useState<string | null>(null);
   const [remove, setRemove] = useState<MusicTrackDto | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  // Rows of the collapsed list, fixed when the library first loads (selected first) so that ticking a
+  // box never makes rows jump or disappear. New uploads are added to it.
+  const [pinned, setPinned] = useState<Set<string> | null>(null);
 
   const busy = uploading.length > 0 || importing;
   useEffect(() => onBusyChange?.(busy), [busy, onBusyChange]);
   useEffect(() => () => audio.current?.pause(), []);
 
+  useEffect(() => {
+    if (!library || pinned) return;
+    const first = [...library.filter((t) => selected.includes(t.id)), ...library.filter((t) => !selected.includes(t.id))];
+    setPinned(new Set(first.slice(0, Math.max(COLLAPSED_ROWS, selected.length)).map((t) => t.id)));
+  }, [library, pinned, selected]);
+
+  const full = selected.length >= MAX_TRACKS_PER_SERIES;
+
   const added = async (tracks: MusicTrackDto[]) => {
     if (tracks.length === 0) return;
     await mutate();
-    onChange(Array.from(new Set([...selected, ...tracks.map((t) => t.id)])));
+    setPinned((p) => new Set([...(p ?? []), ...tracks.map((t) => t.id)]));
+    // New tracks are selected while there is room (break-ui #5).
+    const room = MAX_TRACKS_PER_SERIES - selected.length;
+    const toSelect = tracks.map((t) => t.id).filter((id) => !selected.includes(id)).slice(0, Math.max(0, room));
+    if (toSelect.length) onChange([...selected, ...toSelect]);
   };
 
   const addFiles = async (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    setErrors([]);
+    setFileErrors([]);
     const files = Array.from(list);
     const problems: string[] = [];
     const ok = files.filter((f) => {
@@ -71,7 +106,7 @@ export function MusicPicker({
         setUploading((u) => u.filter((n) => n !== f.name));
       }
     }
-    setErrors(problems);
+    setFileErrors(problems);
     await added(done);
     if (fileInput.current) fileInput.current.value = "";
   };
@@ -83,7 +118,7 @@ export function MusicPicker({
       .filter(Boolean);
     if (links.length === 0) return;
     setImporting(true);
-    setErrors([]);
+    setLinkErrors([]);
     const done: MusicTrackDto[] = [];
     const failed: string[] = [];
     const problems: string[] = [];
@@ -96,7 +131,7 @@ export function MusicPicker({
       }
     }
     setUrls(failed.join("\n")); // keep only the links that still need attention
-    setErrors(problems);
+    setLinkErrors(problems);
     setImporting(false);
     await added(done);
   };
@@ -118,9 +153,16 @@ export function MusicPicker({
       onChange(selected.filter((id) => id !== t.id));
       await mutate();
     } catch (e) {
-      setErrors([e instanceof ApiError ? e.message : "Could not remove the track"]);
+      setFileErrors([e instanceof ApiError ? e.message : "Could not remove the track"]);
     }
   };
+
+  const visible = useMemo(() => {
+    if (!library) return [];
+    if (expanded || !pinned) return library;
+    return library.filter((t) => pinned.has(t.id) || selected.includes(t.id));
+  }, [library, expanded, pinned, selected]);
+  const hidden = (library?.length ?? 0) - visible.length;
 
   return (
     <div className="space-y-6">
@@ -140,6 +182,7 @@ export function MusicPicker({
         <button type="button" className={buttonClass("outline", "sm")} disabled={!urls.trim() || importing} onClick={importLinks}>
           {importing && <Loader2 className="h-4 w-4 animate-spin" />} Import links
         </button>
+        <ErrorList errors={linkErrors} testId="link-errors" />
       </div>
 
       <div className="space-y-3">
@@ -175,57 +218,85 @@ export function MusicPicker({
           onChange={(e) => void addFiles(e.target.files)}
         />
         {uploading.map((n) => (
-          <p key={n} className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading {n}…
+          <p key={n} className="flex items-start gap-2 text-xs text-muted-foreground">
+            <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="min-w-0 [overflow-wrap:anywhere]">Uploading {n}…</span>
           </p>
         ))}
-        {errors.length > 0 && (
-          <ul role="alert" className="space-y-1 text-xs text-destructive">
-            {errors.map((e) => (
-              <li key={e} className="break-words">
-                {e}
-              </li>
-            ))}
-          </ul>
-        )}
+        <ErrorList errors={fileErrors} testId="file-errors" />
       </div>
 
       {library && library.length > 0 && (
         <div className="space-y-3">
-          <p className={label}>Your music</p>
-          <p className="text-xs text-muted-foreground">Selected tracks play in the background of this series&apos; videos.</p>
+          <div className="flex items-baseline justify-between gap-3">
+            <p className={label}>Your music</p>
+            <p className={`text-xs tabular-nums ${full ? "font-medium text-foreground" : "text-muted-foreground"}`} data-testid="music-selected-count">
+              {selected.length}/{MAX_TRACKS_PER_SERIES} selected
+            </p>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {full
+              ? `A series can use up to ${MAX_TRACKS_PER_SERIES} tracks. Unselect one to pick another.`
+              : "Selected tracks play in the background of this series' videos."}
+          </p>
           <ul className="divide-y rounded-lg border" aria-label="Your music">
-            {library.map((t) => {
+            {visible.map((t) => {
               const on = selected.includes(t.id);
-              return (
-                <li key={t.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                  <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={on}
-                    aria-label={`Use ${t.name}`}
-                    onClick={() => onChange(on ? selected.filter((id) => id !== t.id) : [...selected, t.id])}
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border border-primary ${on ? "bg-primary" : ""}`}
-                  >
-                    {on && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
-                  </button>
-                  <span className="min-w-0 flex-1 truncate">{t.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{sizeLabel(t.sizeBytes)}</span>
-                  <button type="button" className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} aria-label={`Play ${t.name}`} onClick={() => togglePlay(t)}>
+              const locked = !on && full;
+              // Play/remove sit under the name on phones (so the name gets the row's width) and at the
+              // end of the row from "sm" up. Hidden copies are display:none, so out of the a11y tree.
+              const actions = (where: string) => (
+                <span className={`shrink-0 gap-1 ${where}`}>
+                  <button type="button" className={buttonClass("outline", "icon", "h-8 w-8")} aria-label={`Play ${t.name}`} onClick={() => togglePlay(t)}>
                     {playing === t.id ? <Square className="h-3 w-3 fill-current" /> : <Play className="h-3.5 w-3.5 fill-current" />}
                   </button>
                   <button
                     type="button"
-                    className={buttonClass("ghost", "icon", "h-8 w-8 shrink-0 text-muted-foreground")}
+                    className={buttonClass("ghost", "icon", "h-8 w-8 text-muted-foreground")}
                     aria-label={`Remove ${t.name}`}
                     onClick={() => setRemove(t)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                </span>
+              );
+              return (
+                // items-start: names can take two lines (break-ui #4).
+                <li key={t.id} className="flex items-start gap-3 px-3 py-2 text-sm">
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    aria-disabled={locked}
+                    disabled={locked}
+                    title={locked ? `Up to ${MAX_TRACKS_PER_SERIES} tracks per series` : undefined}
+                    aria-label={`Use ${t.name}`}
+                    onClick={() => onChange(on ? selected.filter((id) => id !== t.id) : [...selected, t.id])}
+                    className={`mt-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-primary disabled:cursor-not-allowed disabled:opacity-40 ${
+                      on ? "bg-primary" : ""
+                    }`}
+                  >
+                    {on && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+                  </button>
+                  <span className="min-w-0 flex-1 py-1">
+                    <span className="line-clamp-2 [overflow-wrap:anywhere]" title={t.name}>
+                      {t.name}
+                    </span>
+                    <span className="mt-0.5 flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground tabular-nums">{sizeLabel(t.sizeBytes)}</span>
+                      {actions("flex sm:hidden")}
+                    </span>
+                  </span>
+                  {actions("hidden sm:flex")}
                 </li>
               );
             })}
           </ul>
+          {(hidden > 0 || expanded) && (
+            <button type="button" className={buttonClass("ghost", "sm", "-ml-3")} onClick={() => setExpanded((x) => !x)}>
+              {expanded ? "Show fewer" : `Show all ${library.length} tracks`}
+            </button>
+          )}
         </div>
       )}
 

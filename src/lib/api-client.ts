@@ -2,7 +2,12 @@
 
 import useSWR, { mutate as globalMutate, type SWRResponse } from "swr";
 import { IN_PROGRESS, type MeDto, type MusicTrackDto, type SeriesDto, type VideoDto } from "./api-types";
-import { devMe, devMusic, devSeries, useDevDataset } from "./dev-data";
+
+// DEVELOPMENT ONLY (break-ui): the worst-case fixtures. In production builds this condition is the
+// constant `true`, so webpack drops the require and none of the fixture data reaches the bundle.
+const devData: typeof import("./dev-data") | null = process.env.NODE_ENV === "production" ? null : require("./dev-data");
+/** Same hook on every render of a given build (null in production), so the rules of hooks hold. */
+const useDevDataset: () => import("./dev-data").DevDataset | null = devData ? devData.useDevDataset : () => null;
 
 /** DEVELOPMENT ONLY (break-ui): answers a hook with a fixture instead of the API. */
 function devResponse<T>(real: SWRResponse<T>, data: T): SWRResponse<T> {
@@ -54,7 +59,7 @@ export const keys = {
 export function useMusic() {
   const dev = useDevDataset();
   const real = useSWR<MusicTrackDto[]>(dev ? null : keys.music, fetcher, { refreshInterval: 20 * 60 * 1000 });
-  return dev ? devResponse(real, devMusic(dev)) : real;
+  return dev ? devResponse(real, devData!.devMusic(dev)) : real;
 }
 
 /** Uploads one audio file as the raw request body (the server checks the content). */
@@ -74,7 +79,7 @@ export async function uploadMusicFile(file: File): Promise<MusicTrackDto> {
 export function useMe() {
   const dev = useDevDataset();
   const real = useSWR<MeDto>(dev ? null : keys.me, fetcher);
-  return dev ? devResponse(real, devMe(dev)) : real;
+  return dev ? devResponse(real, devData!.devMe(dev)) : real;
 }
 
 export function useSeriesList() {
@@ -84,7 +89,7 @@ export function useSeriesList() {
 export function useSeries(id: string | undefined) {
   const dev = useDevDataset();
   const real = useSWR<SeriesDto>(id && !dev ? keys.seriesOne(id) : null, fetcher, { shouldRetryOnError: false });
-  return dev && id ? devResponse(real, devSeries(dev, id)) : real;
+  return dev && id ? devResponse(real, devData!.devSeries(dev, id)) : real;
 }
 
 /** Videos refresh every 5 seconds while any of them is still being made. */

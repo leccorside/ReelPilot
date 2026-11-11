@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { cleanFileName } from "@/server/audio-file"; // pure function, safe in the browser
 import type { MeDto, MusicTrackDto, SeriesDto } from "./api-types";
 
 // DEVELOPMENT ONLY (break-ui): realistic worst-case datasets swapped in at the data boundary
@@ -61,9 +62,8 @@ const track = (n: number, name: string, sizeBytes: number, source: "upload" | "u
 
 /** Worst case: the first rows of the library each fail differently. */
 const WORST_TRACKS: MusicTrackDto[] = [
-  // A YouTube "no copyright" download name (123 chars) exactly as the server stores it:
-  // cleanFileName() keeps the first 120 characters, which cuts the extension off.
-  track(1, "Lo-fi Chill Beats to Study and Relax To (No Copyright) [Royalty Free Background Music for Videos] - Extended 1 Hour Mix.mp3".slice(0, 120), 10 * MB),
+  // A YouTube "no copyright" download name (123 chars) exactly as the server stores it (120, extension kept).
+  track(1, cleanFileName("Lo-fi Chill Beats to Study and Relax To (No Copyright) [Royalty Free Background Music for Videos] - Extended 1 Hour Mix.mp3", "x"), 10 * MB),
   // 110 characters with no spaces: export tools love underscores.
   track(2, "Ambient_Background_Music_For_YouTube_Shorts_Free_Download_HQ_320kbps_Remastered_Final_v2_FINAL_definitivo_2026.mp3", 9.97 * MB, "url"),
   track(3, "a.wav", 1),

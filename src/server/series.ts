@@ -1,6 +1,7 @@
 import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { SeriesDto } from "@/lib/api-types";
+import { MAX_TRACKS_PER_SERIES, SERIES_NAME_MAX, SERIES_NICHE_MAX, SERIES_NICHE_MIN } from "@/lib/limits";
 import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, VOICES } from "@/lib/options";
 import type { Db, Tx } from "@/server/db";
 import { series, seriesMusicTracks, videos } from "@/server/db/schema";
@@ -12,8 +13,6 @@ import { refundQueuedVideos } from "@/server/videos";
 
 const ids = <T extends readonly { id: string }[]>(list: T) => list.map((x) => x.id) as [string, ...string[]];
 
-/** Background tracks per series (one is picked per video). */
-export const MAX_TRACKS_PER_SERIES = 10;
 
 export function isValidTimezone(tz: string): boolean {
   try {
@@ -25,9 +24,13 @@ export function isValidTimezone(tz: string): boolean {
 }
 
 const fields = {
-  name: z.string().trim().min(1, "Give your series a name.").max(80),
+  name: z.string().trim().min(1, "Give your series a name.").max(SERIES_NAME_MAX, `The series name can have at most ${SERIES_NAME_MAX} characters.`),
   formats: z.array(z.enum(ids(FORMATS))).min(1, "Choose at least one format.").max(FORMATS.length),
-  niche: z.string().trim().min(3, "Describe what the videos are about.").max(1000),
+  niche: z
+    .string()
+    .trim()
+    .min(SERIES_NICHE_MIN, "Describe what the videos are about.")
+    .max(SERIES_NICHE_MAX, `The description can have at most ${SERIES_NICHE_MAX} characters.`),
   language: z.enum(ids(LANGUAGES)),
   voice: z.enum(ids(VOICES)),
   artStyle: z.enum(ids(ART_STYLES)),

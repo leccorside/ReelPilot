@@ -7,7 +7,11 @@ import { signOut, useSession } from "next-auth/react";
 import { ChevronRight, ChevronsUpDown, CreditCard, Film, Info, Layers, LogOut, Menu, Settings, X, Zap } from "lucide-react";
 import { Logo } from "../logo";
 import { useMe } from "@/lib/api-client";
-import { DevDataToggle } from "./dev-data-toggle";
+
+// DEVELOPMENT ONLY (break-ui): loaded with a condition that is constant in production builds, so the
+// toggle and the worst-case fixtures it imports never reach the production bundle.
+const DevDataToggle: (() => JSX.Element | null) | null =
+  process.env.NODE_ENV === "production" ? null : require("./dev-data-toggle").DevDataToggle;
 import type { MeDto } from "@/lib/api-types";
 
 type SessionUser = { name?: string | null; email?: string | null };
@@ -149,10 +153,16 @@ export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[];
             </button>
             <nav className="flex items-center gap-1.5 text-sm text-muted-foreground min-w-0">
               {crumbs.map((c, i) => (
-                <span key={i} className="flex items-center gap-1.5 min-w-0">
+                // The first crumb (the section) never shrinks, nor does the last one when it is a short
+                // action after the record ("Series › <long name> › Edit"); the record name in between
+                // is what gets truncated (break-ui #11). With two crumbs the last one is the record name.
+                <span
+                  key={i}
+                  className={`flex items-center gap-1.5 ${i === 0 || (crumbs.length >= 3 && i === crumbs.length - 1) ? "shrink-0" : "min-w-0"}`}
+                >
                   {i > 0 && <ChevronRight className="h-4 w-4 shrink-0" />}
                   {c.href ? (
-                    <Link href={c.href} className="hover:text-foreground truncate">
+                    <Link href={c.href} className="hover:text-foreground truncate" title={c.label}>
                       {c.label}
                     </Link>
                   ) : (
@@ -166,7 +176,7 @@ export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[];
         </div>
         <div className="p-4 md:p-8">{children}</div>
       </main>
-      {process.env.NODE_ENV !== "production" && <DevDataToggle />}
+      {DevDataToggle && <DevDataToggle />}
     </div>
   );
 }

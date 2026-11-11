@@ -7,6 +7,7 @@ import { Scene } from "../art";
 import { buttonClass } from "../button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "../icons";
 import type { MeDto, SeriesDto, SocialPlatform } from "@/lib/api-types";
+import { SERIES_NAME_MAX, SERIES_NICHE_MAX, SERIES_NICHE_MIN } from "@/lib/limits";
 import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, TIMEZONES, VOICES } from "@/lib/options";
 
 // The fields of a series, shared by the creation wizard (one block per step) and the edit page
@@ -59,11 +60,11 @@ export const formFromSeries = (s: SeriesDto): SeriesForm => ({
 
 /** Same rules as the API, checked as the user types. */
 export const sectionValid = {
-  formats: (f: SeriesForm) => f.formats.length > 0 && f.niche.trim().length >= 3,
+  formats: (f: SeriesForm) => f.formats.length > 0 && f.niche.trim().length >= SERIES_NICHE_MIN && f.niche.trim().length <= SERIES_NICHE_MAX,
   voice: (f: SeriesForm) => !!f.voice,
   art: (f: SeriesForm) => !!f.artStyle,
   caption: (f: SeriesForm) => !!f.captionStyle,
-  schedule: (f: SeriesForm) => f.name.trim().length > 0 && /^([01]\d|2[0-3]):[0-5]\d$/.test(f.postTime),
+  schedule: (f: SeriesForm) => f.name.trim().length > 0 && f.name.trim().length <= SERIES_NAME_MAX && /^([01]\d|2[0-3]):[0-5]\d$/.test(f.postTime),
 };
 
 export const label = "text-sm font-medium leading-none";
@@ -87,7 +88,8 @@ export function FormatsNicheFields({ value, set }: FieldsProps) {
     <>
       <div className="space-y-3">
         <p className={label}>Formats</p>
-        <div className="max-h-72 overflow-y-auto rounded-lg border">
+        {/* No fixed height: with 5 options a scroll box only hides the chosen one (break-ui #2). */}
+        <div className="rounded-lg border">
           {FORMATS.map((f) => (
             <button
               key={f.id}
@@ -111,12 +113,17 @@ export function FormatsNicheFields({ value, set }: FieldsProps) {
         <textarea
           id="niche"
           rows={5}
+          maxLength={SERIES_NICHE_MAX}
+          aria-describedby="niche-count"
           className={`${field} min-h-[120px]`}
           placeholder="Be as detailed as you want. Tell us exactly what kind of content you want to create. For example: 'Video about the most mysterious unsolved cases in true crime history'"
           value={value.niche}
           onChange={(e) => set({ niche: e.target.value })}
           onBlur={(e) => set({ niche: e.target.value })}
         />
+        <p id="niche-count" className="text-right text-xs tabular-nums text-muted-foreground">
+          {value.niche.length.toLocaleString("en-US")}/{SERIES_NICHE_MAX.toLocaleString("en-US")}
+        </p>
       </div>
     </>
   );
@@ -157,7 +164,8 @@ export function LanguageVoiceFields({ value, set }: FieldsProps) {
       </div>
       <div className="space-y-3">
         <p className={label}>Voice Style</p>
-        <div className="max-h-80 overflow-y-auto rounded-lg border px-4">
+        {/* No fixed height, for the same reason as the formats (break-ui #3). */}
+        <div className="rounded-lg border px-4">
           {VOICES.map((v) => (
             <div key={v.id} className="flex items-center gap-3 border-b py-4 last:border-0">
               <button type="button" className="flex flex-1 items-start gap-3 text-left" onClick={() => set({ voice: v.id })}>
@@ -252,7 +260,8 @@ const PLATFORM_ICON = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: Y
 
 /** Name, platforms, frequency and time. The time zone selector is shown on the edit page only. */
 export function ScheduleFields({ value, set, me, showTimezone = false }: FieldsProps & { me: MeDto | undefined; showTimezone?: boolean }) {
-  const connected = (platform: string) => me?.connections.find((c) => c.platform === platform && c.status === "active")?.username;
+  const connection = (platform: string) => me?.connections.find((c) => c.platform === platform);
+  const connected = (platform: string) => connection(platform)?.status === "active";
   const timezones = TIMEZONES.includes(value.timezone) ? TIMEZONES : [value.timezone, ...TIMEZONES];
   return (
     <>
@@ -260,26 +269,41 @@ export function ScheduleFields({ value, set, me, showTimezone = false }: FieldsP
         <label htmlFor="name" className={label}>
           Series name
         </label>
-        <input id="name" className={`${field} h-10`} value={value.name} onChange={(e) => set({ name: e.target.value })} onBlur={(e) => set({ name: e.target.value })} placeholder="e.g. history" />
+        <input
+          id="name"
+          maxLength={SERIES_NAME_MAX}
+          className={`${field} h-10`}
+          value={value.name}
+          onChange={(e) => set({ name: e.target.value })}
+          onBlur={(e) => set({ name: e.target.value })}
+          placeholder="e.g. history"
+        />
       </div>
       <div className="space-y-3">
         <p className={label}>Post to</p>
-        <div className="grid gap-3 sm:grid-cols-3">
+        {/* grid-cols-1 = minmax(0, 1fr): a long channel name truncates instead of widening the page (break-ui #1). */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {PLATFORMS.map((p) => {
             const Icon = PLATFORM_ICON[p.id as keyof typeof PLATFORM_ICON];
             const on = value.platforms.includes(p.id as SocialPlatform);
+            const conn = connection(p.id);
+            const expired = !!conn && conn.status !== "active";
             return (
               <button
                 key={p.id}
                 type="button"
                 aria-pressed={on}
                 onClick={() => set({ platforms: toggled(value.platforms, p.id as SocialPlatform) })}
-                className={`flex items-center gap-3 rounded-lg border-2 p-3 text-left ${on ? "border-primary" : "border-border"}`}
+                className={`flex min-w-0 items-center gap-3 rounded-lg border-2 p-3 text-left ${on ? "border-primary" : "border-border"}`}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className="h-5 w-5 shrink-0" />
                 <span className="min-w-0">
                   <span className="block text-sm font-medium">{p.name}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{connected(p.id) ?? "Not connected"}</span>
+                  <span title={conn?.username} className="block truncate text-xs text-muted-foreground">
+                    {conn?.username ?? "Not connected"}
+                  </span>
+                  {/* Own line: appended to a long handle it would be truncated away (break-ui #7). */}
+                  {expired && <span className="block text-xs font-medium text-amber-700">Reconnect needed</span>}
                 </span>
               </button>
             );

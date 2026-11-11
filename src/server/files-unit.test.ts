@@ -27,6 +27,17 @@ describe("cleanFileName", () => {
     expect(cleanFileName("   ", "Fallback")).toBe("Fallback");
     expect(cleanFileName("a".repeat(300), "x")).toHaveLength(120);
   });
+
+  it("keeps the extension when shortening a long name", () => {
+    const long = "Lo-fi Chill Beats to Study and Relax To (No Copyright) [Royalty Free Background Music for Videos] - Extended 1 Hour Mix.mp3";
+    const cleaned = cleanFileName(long, "x");
+    // 116 characters + ".mp3"; the space the cut lands on is dropped (no "Hour .mp3").
+    expect(cleaned).toBe("Lo-fi Chill Beats to Study and Relax To (No Copyright) [Royalty Free Background Music for Videos] - Extended 1 Hour.mp3");
+    expect(Array.from(cleaned).length).toBeLessThanOrEqual(120);
+    expect(cleaned.startsWith("Lo-fi Chill Beats")).toBe(true);
+    // Emoji count as one character and are never split.
+    expect(cleanFileName("🎵".repeat(130) + ".wav", "x")).toBe("🎵".repeat(116) + ".wav");
+  });
 });
 
 describe("signed media links", () => {

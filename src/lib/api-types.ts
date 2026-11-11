@@ -52,6 +52,12 @@ export type MusicTrackDto = {
   url: string;
 };
 
+/** Videos per page of GET /api/videos. */
+export const VIDEO_PAGE_SIZE = 50;
+
+/** Cursor of the next page: "<createdAt ISO>_<id>" of the last video of the current page. */
+export const videoCursor = (v: { createdAt: string; id: string }) => `${v.createdAt}_${v.id}`;
+
 export type VideoDto = {
   id: string;
   seriesId: string;
@@ -78,6 +84,8 @@ export type MeDto = {
     autoPublish: boolean;
   };
   plan: { id: PlanId; name: string; monthlyCredits: number };
+  /** series: how many the plan allows (null = unlimited); seriesUsed: how many the account has. */
+  limits: { series: number | null; seriesUsed: number };
   credits: { balance: number; allowance: number };
   connections: { id: string; platform: SocialPlatform; username: string; status: "active" | "expired" | "revoked" }[];
 };

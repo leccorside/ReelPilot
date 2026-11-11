@@ -28,7 +28,7 @@ const NOT_YET = {
 };
 
 export function VideoGrid({ seriesId }: { seriesId?: string }) {
-  const { data: videos, error, isLoading } = useVideos(seriesId);
+  const { data: videos, error, isLoading, hasMore, isLoadingMore, loadMore } = useVideos(seriesId);
   const [remove, setRemove] = useState<VideoDto | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -67,7 +67,20 @@ export function VideoGrid({ seriesId }: { seriesId?: string }) {
         )}
       </Card>
     );
-  else body = <VideoCards videos={videos} onDelete={setRemove} />;
+  else
+    body = (
+      <>
+        <VideoCards videos={videos} onDelete={setRemove} />
+        {/* The API returns 50 videos at a time; older ones come with "Load more" (break-ui #2). */}
+        {hasMore && (
+          <div className="mt-6 flex justify-center">
+            <button type="button" className={buttonClass("outline")} onClick={loadMore} disabled={isLoadingMore}>
+              {isLoadingMore && <Loader2 className="h-4 w-4 animate-spin" />} Load more videos
+            </button>
+          </div>
+        )}
+      </>
+    );
 
   return (
     <>
@@ -90,6 +103,15 @@ export function VideoGrid({ seriesId }: { seriesId?: string }) {
   );
 }
 
+/** "#1284" from "<series name> #1284" (null when the series was renamed after the video was made). */
+function videoNumber(v: VideoDto): string | null {
+  if (!v.title.startsWith(v.seriesName)) return null;
+  const rest = v.title.slice(v.seriesName.length).trim();
+  return /^#\d+$/.test(rest) ? rest : null;
+}
+
+const duration = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.round((ms % 60000) / 1000)).padStart(2, "0")}`;
+
 function VideoCards({ videos, onDelete }: { videos: VideoDto[]; onDelete: (v: VideoDto) => void }) {
   return (
     <>
@@ -97,38 +119,62 @@ function VideoCards({ videos, onDelete }: { videos: VideoDto[]; onDelete: (v: Vi
         {videos.map((v) => {
           const st = STATUS[v.status];
           const working = IN_PROGRESS.includes(v.status);
+          const number = videoNumber(v);
+          const name = number ? v.seriesName : v.title;
           return (
-            <Card key={v.id} className="overflow-hidden" data-testid="video-card">
+            // Column layout: the actions sit at the bottom of every card, aligned across a row (#8).
+            <Card key={v.id} className="flex flex-col overflow-hidden" data-testid="video-card">
               <div className="relative block w-full aspect-[9/16]">
-                <Scene variant={hueFor(v.id) % 8} word={v.title.split(" ")[0]} className="absolute inset-0" />
-                <span className="absolute inset-0 flex items-center justify-center">
-                  {working && <Loader2 className="h-8 w-8 animate-spin text-white" />}
-                  {v.status === "failed" && <AlertTriangle className="h-8 w-8 text-white" />}
+                {/* Placeholder art until real thumbnails: the video number, short and unique (#6, #9). */}
+                <Scene variant={hueFor(v.id) % 8} word={number ?? undefined} className="absolute inset-0" />
+                {/* Status icons at the bottom, never over the number. */}
+                <span className="absolute inset-x-0 bottom-4 flex justify-center">
+                  {working && <Loader2 className="h-7 w-7 animate-spin text-white drop-shadow" aria-hidden />}
+                  {v.status === "failed" && <AlertTriangle className="h-7 w-7 text-white drop-shadow" aria-hidden />}
                 </span>
                 <Badge tone={st.tone} className="absolute left-2 top-2">
                   {st.label}
                 </Badge>
               </div>
-              <div className="p-3 space-y-2">
-                <div>
-                  <p className="text-sm font-medium truncate">{v.title}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {v.seriesName} · {fmtDate(Date.parse(v.createdAt))}
+              <div className="flex flex-1 flex-col gap-2 p-3">
+                <div className="min-w-0">
+                  {/* The series name may be cut; the video number never is (#3, #7). */}
+                  <p className="flex min-w-0 text-sm font-medium" title={v.title}>
+                    <span dir="auto" className="truncate">
+                      {name}
+                    </span>
+                    {number && <bdi className="shrink-0 pl-1 tabular-nums">{number}</bdi>}
                   </p>
-                  {v.status === "failed" && v.error && (
-                    <p className="mt-1 text-xs text-destructive line-clamp-2" title={v.error}>
-                      {v.error} — credit refunded.
-                    </p>
+                  {/* Only the date (and length): the series is already in the title, and dates are never cut (#4). */}
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {fmtDate(Date.parse(v.createdAt))}
+                    {v.durationMs ? ` · ${duration(v.durationMs)}` : ""}
+                  </p>
+                  {v.status === "failed" && (
+                    <>
+                      {v.error && (
+                        <p className="mt-1 text-xs text-destructive line-clamp-2 [overflow-wrap:anywhere]" title={v.error}>
+                          {v.error}
+                        </p>
+                      )}
+                      {/* Own line, so it is never clamped away with a long error (#5). */}
+                      <p className="mt-0.5 text-xs font-medium text-muted-foreground">Credit refunded</p>
+                    </>
                   )}
                 </div>
-                <div className="flex gap-1">
-                  <button className={buttonClass("outline", "sm", "h-8 flex-1 px-2 text-xs")} disabled title={NOT_YET.publish}>
-                    <Send className="h-3.5 w-3.5" /> Publish
+                {/* Icon buttons that never shrink: all three fit in a 136px card (#1). */}
+                <div className="mt-auto flex items-center gap-1">
+                  <button className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} disabled title={NOT_YET.publish} aria-label="Publish">
+                    <Send className="h-3.5 w-3.5" />
                   </button>
-                  <button className={buttonClass("outline", "icon", "h-8 w-8")} disabled title={NOT_YET.download} aria-label="Download">
+                  <button className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} disabled title={NOT_YET.download} aria-label="Download">
                     <Download className="h-3.5 w-3.5" />
                   </button>
-                  <button className={buttonClass("ghost", "icon", "h-8 w-8 text-muted-foreground")} aria-label="Delete video" onClick={() => onDelete(v)}>
+                  <button
+                    className={buttonClass("ghost", "icon", "ml-auto h-8 w-8 shrink-0 text-muted-foreground")}
+                    aria-label="Delete video"
+                    onClick={() => onDelete(v)}
+                  >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>

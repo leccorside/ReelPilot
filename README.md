@@ -491,10 +491,10 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | `GET /api/me` | Perfil, preferências, plano, saldo de créditos e contas sociais conectadas |
 | `PATCH /api/account` | Atualiza nome, fuso, notificações por e-mail e publicação automática |
 | `GET /api/series` | Séries do usuário, com total de vídeos e de publicados |
-| `POST /api/series` | Cria uma série com os campos do assistente |
+| `POST /api/series` | Cria uma série com os campos do assistente (`403` quando o plano já tem o máximo de séries) |
 | `GET` / `PATCH` / `DELETE /api/series/:id` | Detalhe, edição (inclusive pausar e retomar) e exclusão |
 | `POST /api/series/:id/videos` | Coloca um vídeo novo na fila e cobra 1 crédito (`402` sem crédito) |
-| `GET /api/videos?seriesId=` | Vídeos do usuário (os 100 mais recentes), opcionalmente de uma série |
+| `GET /api/videos?seriesId=&limit=&cursor=` | Vídeos do usuário, do mais novo ao mais antigo, opcionalmente de uma série. Páginas de `limit` vídeos (padrão 50, máximo 200); a próxima página vem com `cursor=<createdAt>_<id>` do último vídeo recebido |
 | `GET` / `DELETE /api/videos/:id` | Detalhe e exclusão |
 | `DELETE /api/social-connections/:id` | Desconecta uma rede social |
 | `GET /api/music` | Biblioteca de música do usuário, com links de reprodução assinados |
@@ -504,6 +504,8 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | `GET /api/media/<arquivo>?exp=&sig=` | Entrega um arquivo por link assinado (sem login; o link é a permissão), com suporte a `Range` |
 
 Os campos das séries incluem `musicTrackIds` (até 10 faixas da própria biblioteca).
+
+**Séries por plano:** Free e Starter 1, Growth 3, Pro sem limite. O `GET /api/me` informa o limite e o uso em `limits`, e o assistente avisa antes de começar.
 
 ### Arquivos
 

@@ -5,7 +5,9 @@ import { MAX_TRACKS_PER_SERIES, SERIES_NAME_MAX, SERIES_NICHE_MAX, SERIES_NICHE_
 import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, VOICES } from "@/lib/options";
 import type { Db, Tx } from "@/server/db";
 import { series, seriesMusicTracks, videos } from "@/server/db/schema";
-import { NotFoundError, ValidationError } from "@/server/errors";
+import { NotFoundError, PlanLimitError, ValidationError } from "@/server/errors";
+import { planInfo } from "@/lib/plans";
+import { currentPlan } from "@/server/plan";
 import { ownedTrackIds } from "@/server/music";
 import { refundQueuedVideos } from "@/server/videos";
 
@@ -128,10 +130,22 @@ async function setSeriesMusic(tx: Tx, userId: string, seriesId: string, trackIds
   if (owned.length) await tx.insert(seriesMusicTracks).values(owned.map((musicTrackId) => ({ seriesId, musicTrackId })));
 }
 
-/** Creates a series. Without a time zone it uses the user's. */
+/** Message shown when the plan's series limit is reached. */
+export function seriesLimitMessage(planName: string, max: number) {
+  return `Your ${planName} plan includes ${max} series. Delete a series or upgrade your plan to create another.`;
+}
+
+/** Creates a series. Without a time zone it uses the user's. Respects the plan's series limit. */
 export async function createSeries(db: Db, userId: string, input: unknown, userTimezone = "UTC"): Promise<SeriesDto> {
   const { musicTrackIds, ...data } = parse(createSeriesSchema, input);
   const id = await db.transaction(async (tx) => {
+    // Per-user lock: two simultaneous creations can't both slip under the limit.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`series:${userId}`}, 0))`);
+    const plan = planInfo(await currentPlan(tx, userId));
+    if (plan.maxSeries !== null) {
+      const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(series).where(eq(series.userId, userId));
+      if (n >= plan.maxSeries) throw new PlanLimitError(seriesLimitMessage(plan.name, plan.maxSeries));
+    }
     const [row] = await tx
       .insert(series)
       .values({ ...data, timezone: data.timezone ?? userTimezone, userId })

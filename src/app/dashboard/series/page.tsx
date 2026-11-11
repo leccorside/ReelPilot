@@ -41,8 +41,8 @@ export default function SeriesPage() {
     <DashboardShell
       crumbs={[{ label: "Dashboard", href: "/dashboard/series/" }, { label: "Series" }]}
       actions={
-        <Link href="/dashboard/create/" className={buttonClass("primary", "sm")}>
-          <Plus className="h-4 w-4" /> Create Series
+        <Link href="/dashboard/create/" className={buttonClass("primary", "sm", "shrink-0")} aria-label="Create Series">
+          <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Create Series</span>
         </Link>
       }
     >
@@ -67,12 +67,32 @@ export default function SeriesPage() {
         </Card>
       ) : (
         <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Below lg (phones, tablets, 200% zoom) the table no longer fits next to the sidebar: a stacked
+              list keeps name, status, numbers and actions visible (#2). */}
+          <ul className="divide-y lg:hidden" aria-label="Your series">
+            {series.map((s) => (
+              <li key={s.id} className="space-y-2 px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <SeriesName s={s} className="flex-1" />
+                  {s.status === "paused" && <Badge tone="gray" className="shrink-0">Paused</Badge>}
+                </div>
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  Created {fmtDate(Date.parse(s.createdAt))} · {videosLabel(s.publishedCount)} published
+                </p>
+                <div className="flex items-center gap-2">
+                  <PauseButton s={s} busy={busy === s.id} onToggle={toggle} />
+                  <button className={buttonClass("ghost", "icon", "ml-auto h-9 w-9 shrink-0 text-muted-foreground")} aria-label={`Delete ${s.name}`} onClick={() => setRemove(s)}>
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto lg:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-muted-foreground">
                   <th className="h-12 px-4 font-medium">Name</th>
-                  <th className="h-12 px-4 font-medium">Type</th>
                   <th className="h-12 px-4 font-medium">Created</th>
                   <th className="h-12 px-4 font-medium">Published</th>
                   <th className="h-12 px-4 font-medium text-center">Actions</th>
@@ -81,35 +101,24 @@ export default function SeriesPage() {
               <tbody>
                 {series.map((s) => (
                   <tr key={s.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
-                    <td className="px-4 py-3">
-                      <Link href={`/dashboard/series/${s.id}/`} className="hover:underline">
-                        {s.name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge>Voiceover</Badge>
+                    {/* Wraps (2 lines max) instead of widening the table and pushing the actions out (#1). */}
+                    <td className="w-full min-w-[10rem] max-w-[28rem] px-4 py-3">
+                      <div className="flex items-start gap-2">
+                        <SeriesName s={s} />
+                        {s.status === "paused" && <Badge tone="gray" className="shrink-0">Paused</Badge>}
+                      </div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4" />
+                        <Calendar className="h-4 w-4 shrink-0" />
                         {fmtDate(Date.parse(s.createdAt))}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">{s.publishedCount} video(s)</td>
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums">{videosLabel(s.publishedCount)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-2">
-                        <button className={buttonClass("outline", "sm", "w-24")} disabled={busy === s.id} onClick={() => toggle(s)}>
-                          {s.status === "active" ? (
-                            <>
-                              <Pause className="h-3.5 w-3.5 fill-current" /> Pause
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-3.5 w-3.5 fill-current" /> Resume
-                            </>
-                          )}
-                        </button>
-                        <button className={buttonClass("ghost", "icon", "h-9 w-9 text-muted-foreground")} aria-label={`Delete ${s.name}`} onClick={() => setRemove(s)}>
+                        <PauseButton s={s} busy={busy === s.id} onToggle={toggle} />
+                        <button className={buttonClass("ghost", "icon", "h-9 w-9 shrink-0 text-muted-foreground")} aria-label={`Delete ${s.name}`} onClick={() => setRemove(s)}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -132,5 +141,38 @@ export default function SeriesPage() {
       />
       <Toast message={toast} onDone={() => setToast(null)} />
     </DashboardShell>
+  );
+}
+
+const numberFormat = new Intl.NumberFormat("en-US");
+
+/** "No videos", "1 video", "1,284 videos" (#4). */
+function videosLabel(n: number) {
+  if (n === 0) return "No videos";
+  return `${numberFormat.format(n)} ${n === 1 ? "video" : "videos"}`;
+}
+
+function SeriesName({ s, className = "" }: { s: SeriesDto; className?: string }) {
+  return (
+    <Link href={`/dashboard/series/${s.id}/`} title={s.name} dir="auto" className={`min-w-0 font-medium hover:underline line-clamp-2 [overflow-wrap:anywhere] ${className}`}>
+      {s.name}
+    </Link>
+  );
+}
+
+/** Width from its content (min-w, not w): translated labels never overflow (#7). */
+function PauseButton({ s, busy, onToggle }: { s: SeriesDto; busy: boolean; onToggle: (s: SeriesDto) => void }) {
+  return (
+    <button className={buttonClass("outline", "sm", "min-w-24 shrink-0")} disabled={busy} onClick={() => onToggle(s)}>
+      {s.status === "active" ? (
+        <>
+          <Pause className="h-3.5 w-3.5 fill-current" /> Pause
+        </>
+      ) : (
+        <>
+          <Play className="h-3.5 w-3.5 fill-current" /> Resume
+        </>
+      )}
+    </button>
   );
 }

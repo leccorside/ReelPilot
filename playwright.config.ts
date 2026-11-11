@@ -9,6 +9,9 @@ export default defineConfig({
   // Right after a code change, several workers can hit uncompiled pages at once: allow 30 s.
   expect: { timeout: 30_000 },
   fullyParallel: true,
+  // One development server answers every worker: with one worker per core it fell behind and
+  // random tests hit the 60 s timeout (break-ui on the video grid and the series list).
+  workers: 4,
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {

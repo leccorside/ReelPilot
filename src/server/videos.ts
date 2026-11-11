@@ -1,6 +1,6 @@
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import type { VideoDto } from "@/lib/api-types";
+import { VIDEO_PAGE_SIZE, type VideoDto, videoCursor } from "@/lib/api-types";
 import type { Db, DbOrTx, Tx } from "@/server/db";
 import { getCreditBalance } from "@/server/db/credits";
 import { creditLedger, series, videos } from "@/server/db/schema";
@@ -32,15 +32,39 @@ function toDto(row: typeof videos.$inferSelect & { seriesName: string }): VideoD
 
 const withSeriesName = { video: videos, seriesName: series.name };
 
-export async function listVideos(db: Db, userId: string, opts: { seriesId?: string; limit?: number } = {}): Promise<VideoDto[]> {
+export { VIDEO_PAGE_SIZE, videoCursor };
+
+function parseCursor(cursor: string | undefined): { at: string; id: string } | null {
+  const m = cursor?.match(/^(.+)_([0-9a-f-]{36})$/i);
+  if (!m || Number.isNaN(Date.parse(m[1])) || !uuid.safeParse(m[2]).success) return null;
+  return { at: new Date(m[1]).toISOString(), id: m[2] };
+}
+
+/**
+ * The user's videos, newest first, one page at a time. Pass the cursor of the last video to get the
+ * next page. Times are compared at millisecond precision, the precision the cursor carries.
+ */
+export async function listVideos(
+  db: Db,
+  userId: string,
+  opts: { seriesId?: string; limit?: number; cursor?: string } = {},
+): Promise<VideoDto[]> {
   if (opts.seriesId && !uuid.safeParse(opts.seriesId).success) return [];
+  const after = parseCursor(opts.cursor);
+  const createdMs = sql`date_trunc('milliseconds', ${videos.createdAt})`;
   const rows = await db
     .select(withSeriesName)
     .from(videos)
     .innerJoin(series, eq(series.id, videos.seriesId))
-    .where(and(eq(videos.userId, userId), opts.seriesId ? eq(videos.seriesId, opts.seriesId) : undefined))
-    .orderBy(desc(videos.createdAt))
-    .limit(Math.min(opts.limit ?? 100, 200));
+    .where(
+      and(
+        eq(videos.userId, userId),
+        opts.seriesId ? eq(videos.seriesId, opts.seriesId) : undefined,
+        after ? sql`(${createdMs}, ${videos.id}) < (${after.at}::timestamptz, ${after.id}::uuid)` : undefined,
+      ),
+    )
+    .orderBy(sql`${createdMs} desc`, desc(videos.id))
+    .limit(Math.max(1, Math.min(opts.limit ?? VIDEO_PAGE_SIZE, 200)));
   return rows.map((r) => toDto({ ...r.video, seriesName: r.seriesName }));
 }
 

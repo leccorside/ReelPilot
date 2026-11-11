@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import useSWR, { mutate as globalMutate, type SWRResponse } from "swr";
-import { IN_PROGRESS, type MeDto, type MusicTrackDto, type SeriesDto, type VideoDto } from "./api-types";
+import useSWRInfinite from "swr/infinite";
+import { IN_PROGRESS, type MeDto, type MusicTrackDto, type SeriesDto, VIDEO_PAGE_SIZE, type VideoDto, videoCursor } from "./api-types";
 
 // DEVELOPMENT ONLY (break-ui): the worst-case fixtures. In production builds this condition is the
 // constant `true`, so webpack drops the require and none of the fixture data reaches the bundle.
@@ -94,18 +96,69 @@ export function useSeries(id: string | undefined) {
   return dev && id ? devResponse(real, devData!.devSeries(dev, id)) : real;
 }
 
-/** Videos refresh every 5 seconds while any of them is still being made. */
-export function useVideos(seriesId?: string) {
+/** Revalidators of the mounted paged lists (see useVideos). */
+const pagedLists = new Set<() => Promise<unknown>>();
+
+export type VideoPages = {
+  data: VideoDto[] | undefined;
+  error: unknown;
+  isLoading: boolean;
+  /** More (older) videos exist beyond what is loaded. */
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => void;
+};
+
+/**
+ * The user's videos, newest first, in pages of 50 ("Load more" fetches the next one with the cursor
+ * of the last video). Everything loaded refreshes every 5 seconds while a video is being made.
+ */
+export function useVideos(seriesId?: string): VideoPages {
   const dev = useDevDataset();
-  const real = useSWR<VideoDto[]>(dev ? null : keys.videos(seriesId), fetcher, {
-    refreshInterval: (data) => (data?.some((v) => IN_PROGRESS.includes(v.status)) ? 5000 : 0),
-  });
-  return dev ? devResponse(real, devData!.devVideos(dev)) : real;
+  const [devPages, setDevPages] = useState(1);
+  const base = `/api/videos/?limit=${VIDEO_PAGE_SIZE}${seriesId ? `&seriesId=${seriesId}` : ""}`;
+  const inf = useSWRInfinite<VideoDto[]>(
+    (index, previous: VideoDto[] | null) => {
+      if (dev) return null;
+      if (previous && previous.length < VIDEO_PAGE_SIZE) return null; // the previous page was the last one
+      return index === 0 || !previous ? base : `${base}&cursor=${encodeURIComponent(videoCursor(previous[previous.length - 1]))}`;
+    },
+    fetcher,
+    { refreshInterval: (pages) => (pages?.some((page) => page.some((v) => IN_PROGRESS.includes(v.status))) ? 5000 : 0) },
+  );
+
+  // refreshDashboard() reaches paged lists through this registry: SWR's global mutate() with a key
+  // filter does not revalidate useSWRInfinite caches.
+  const { mutate: revalidatePages } = inf;
+  useEffect(() => {
+    const refresh = () => revalidatePages();
+    pagedLists.add(refresh);
+    return () => void pagedLists.delete(refresh);
+  }, [revalidatePages]);
+
+  if (dev) {
+    // Development datasets: page through the fixture the same way.
+    const all = devData!.devVideos(dev);
+    const shown = all.slice(0, devPages * VIDEO_PAGE_SIZE);
+    return { data: shown, error: undefined, isLoading: false, hasMore: shown.length < all.length, isLoadingMore: false, loadMore: () => setDevPages((n) => n + 1) };
+  }
+
+  const pages = inf.data;
+  const last = pages?.[pages.length - 1];
+  return {
+    data: pages?.flat(),
+    error: inf.error,
+    isLoading: inf.isLoading,
+    hasMore: !!last && last.length === VIDEO_PAGE_SIZE,
+    isLoadingMore: inf.isValidating && !!pages && inf.size > pages.length,
+    loadMore: () => void inf.setSize(inf.size + 1),
+  };
 }
 
 /** Refreshes everything the dashboard shows (after creating/deleting things that move credits). */
 export function refreshDashboard() {
-  return globalMutate((key) => typeof key === "string" && (key.startsWith("/api/me") || key.startsWith("/api/series") || key.startsWith("/api/videos")));
+  pagedLists.forEach((refresh) => void refresh());
+  return globalMutate((key) => typeof key === "string" && (key.startsWith("/api/me") || key.startsWith("/api/series") || key.includes("/api/videos")));
 }
 
 /** Stable pseudo-random hue for a video id (placeholder artwork until real thumbnails exist). */

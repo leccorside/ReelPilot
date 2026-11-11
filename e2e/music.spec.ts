@@ -87,13 +87,10 @@ test("removing a track from the library takes it out of the series", async ({ pa
     },
   });
   expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
 
-  await page.goto("/dashboard/create/");
-  await page.getByRole("button", { name: /^Storytelling/ }).click();
-  await page.locator("#niche").fill("Anything");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: /^Adam/ }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
+  // The library is managed from the series editor (the wizard is closed: Free allows one series).
+  await page.goto(`/dashboard/series/${id}/edit/`);
   await page.getByRole("button", { name: "Remove loop.wav" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Remove" }).click();
   await expect(page.getByRole("list", { name: "Your music" })).toHaveCount(0);

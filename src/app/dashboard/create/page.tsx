@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -91,6 +92,31 @@ export default function CreateSeriesPage() {
   const problem = section ? sectionProblem(section, form) : musicBusy ? "Wait for the music to finish uploading." : null;
   const canContinue = problem === null;
   const outOfCredits = me !== undefined && me.credits.balance < 1;
+  // The plan's series limit is checked up front, not after six steps (the API enforces it too).
+  const atSeriesLimit = !!me && me.limits.series !== null && me.limits.seriesUsed >= me.limits.series;
+
+  if (atSeriesLimit)
+    return (
+      <DashboardShell crumbs={[{ label: "Series", href: "/dashboard/series/" }, { label: "Create New Series" }]}>
+        <div className="mx-auto max-w-2xl py-2 md:py-4">
+          <div role="status" className="rounded-xl border p-6 text-center">
+            <h1 className="text-lg font-semibold">You&apos;ve reached your plan&apos;s series limit</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Your {me!.plan.name} plan includes {me!.limits.series} series, and you already have {me!.limits.seriesUsed}. Delete a series or upgrade your
+              plan to create another.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <Link href="/dashboard/series/" className={buttonClass("outline")}>
+                Go to your series
+              </Link>
+              <Link href="/dashboard/billing/" className={buttonClass("primary")}>
+                See plans
+              </Link>
+            </div>
+          </div>
+        </div>
+      </DashboardShell>
+    );
 
   const next = () => {
     if (!canContinue) return;

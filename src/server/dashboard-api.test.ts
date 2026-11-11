@@ -4,19 +4,20 @@ import { afterAll, describe, expect, inject, it } from "vitest";
 import { createDb } from "@/server/db";
 import { getCreditBalance } from "@/server/db/credits";
 import { creditLedger, subscriptions, users, videos } from "@/server/db/schema";
-import { InsufficientCreditsError, NotFoundError, ValidationError } from "@/server/errors";
+import { InsufficientCreditsError, NotFoundError, PlanLimitError, ValidationError } from "@/server/errors";
 import { deleteConnection, getMe, updateAccount } from "@/server/me";
 import { createSeries, deleteSeries, getSeries, listSeries, updateSeries } from "@/server/series";
-import { createVideo, deleteVideo, failVideo, getVideo, listVideos } from "@/server/videos";
+import { createVideo, deleteVideo, failVideo, getVideo, listVideos, videoCursor } from "@/server/videos";
 import { socialConnections } from "@/server/db/schema";
 
 // Integration tests of the dashboard API rules, against the "<db>_test" database.
 const { db, client } = createDb(inject("testDatabaseUrl"), { max: 12 });
 afterAll(() => client.end({ timeout: 5 }));
 
-async function newUser(credits = 0) {
+async function newUser(credits = 0, plan?: "starter" | "growth" | "pro") {
   const [user] = await db.insert(users).values({ email: `api-${randomUUID()}@test.dev` }).returning();
   if (credits) await db.insert(creditLedger).values({ userId: user.id, delta: credits, reason: "manual_adjustment" });
+  if (plan) await db.insert(subscriptions).values({ userId: user.id, plan, status: "active" });
   return user.id;
 }
 
@@ -173,7 +174,7 @@ describe("videos and credits", () => {
   });
 
   it("keeps each user's videos private and filters by series", async () => {
-    const a = await newUser(2);
+    const a = await newUser(2, "pro"); // two series need a plan above Free
     const b = await newUser(1);
     const s1 = await createSeries(db, a, wizard);
     const s2 = await createSeries(db, a, { ...wizard, name: "Second" });
@@ -185,6 +186,57 @@ describe("videos and credits", () => {
     await expect(getVideo(db, b, v.id)).rejects.toBeInstanceOf(NotFoundError);
     await expect(deleteVideo(db, b, v.id)).rejects.toBeInstanceOf(NotFoundError);
     expect(await listVideos(db, a)).toHaveLength(2);
+  });
+});
+
+describe("plan limits and paging", () => {
+  it("Free and Starter allow 1 series, Growth 3 and Pro any number", async () => {
+    const free = await newUser();
+    await createSeries(db, free, wizard);
+    await expect(createSeries(db, free, wizard)).rejects.toThrow("Your Free plan includes 1 series");
+
+    const growth = await newUser(0, "growth");
+    for (let i = 0; i < 3; i++) await createSeries(db, growth, { ...wizard, name: `G${i}` });
+    await expect(createSeries(db, growth, wizard)).rejects.toBeInstanceOf(PlanLimitError);
+
+    const pro = await newUser(0, "pro");
+    for (let i = 0; i < 5; i++) await createSeries(db, pro, { ...wizard, name: `P${i}` });
+    expect(await listSeries(db, pro)).toHaveLength(5);
+    expect((await getMe(db, pro)).limits).toEqual({ series: null, seriesUsed: 5 });
+    expect((await getMe(db, free)).limits).toEqual({ series: 1, seriesUsed: 1 });
+  });
+
+  it("simultaneous creations can't go over the limit, and deleting frees a slot", async () => {
+    const free = await newUser();
+    const results = await Promise.allSettled(Array.from({ length: 5 }, (_, i) => createSeries(db, free, { ...wizard, name: `S${i}` })));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const [only] = await listSeries(db, free);
+    await deleteSeries(db, free, only.id);
+    expect((await createSeries(db, free, wizard)).name).toBe(wizard.name);
+  });
+
+  it("pages through all the videos with the cursor, newest first, without gaps or repeats", async () => {
+    const userId = await newUser(0, "pro");
+    const s = await createSeries(db, userId, wizard);
+    // 120 videos, several sharing the same millisecond (ties are broken by id).
+    const at = Date.UTC(2026, 10, 1);
+    await db.insert(videos).values(
+      Array.from({ length: 120 }, (_, i) => ({ seriesId: s.id, userId, title: `V${i}`, createdAt: new Date(at + Math.floor(i / 3) * 1000) })),
+    );
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const batch = await listVideos(db, userId, { cursor, limit: 50 });
+      seen.push(...batch.map((v) => v.id));
+      if (batch.length < 50) break;
+      cursor = videoCursor(batch[batch.length - 1]);
+    }
+    expect(seen).toHaveLength(120);
+    expect(new Set(seen).size).toBe(120);
+    const all = await listVideos(db, userId, { limit: 200 });
+    expect(all.map((v) => v.id)).toEqual(seen); // same order as one big page
+    expect(Date.parse(all[0].createdAt)).toBeGreaterThanOrEqual(Date.parse(all[119].createdAt));
+    expect(await listVideos(db, userId, { cursor: "garbage" })).toHaveLength(50); // bad cursor = first page
   });
 });
 

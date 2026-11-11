@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { InsufficientCreditsError, NotFoundError, RateLimitedError, TooLargeError, ValidationError } from "@/server/errors";
+import { InsufficientCreditsError, NotFoundError, PlanLimitError, RateLimitedError, TooLargeError, ValidationError } from "@/server/errors";
 
 /** Id of the signed-in user (session checked against the database), or null. */
 export async function currentUserId(): Promise<string | null> {
@@ -41,6 +41,7 @@ export async function withUser(handler: (userId: string) => Promise<Response>): 
     if (e instanceof ValidationError) return jsonError(400, e.message);
     if (e instanceof NotFoundError) return jsonError(404, e.message);
     if (e instanceof InsufficientCreditsError) return jsonError(402, e.message);
+    if (e instanceof PlanLimitError) return jsonError(403, e.message);
     if (e instanceof TooLargeError) return jsonError(413, e.message);
     if (e instanceof RateLimitedError) return jsonError(429, e.message);
     throw e;

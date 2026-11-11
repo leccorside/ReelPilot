@@ -175,3 +175,87 @@ test("name and description can't go over the API limits, and the API explains it
   expect(res.status()).toBe(400);
   expect(await res.json()).toEqual({ error: "The series name can have at most 80 characters." });
 });
+
+// Regression tests from the break-ui runs on the video grid (CONTEXTO.md #21) and the series list (#22).
+test.describe("video grid with worst-case data", () => {
+  test("phone width: every card keeps its actions, number, date and refund note (#1, #3, #4, #5)", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 320, height: 700 } });
+    const page = await ctx.newPage();
+    await signedInUser(page);
+    await page.goto("/dashboard/videos/?data=worst");
+    const cards = page.getByTestId("video-card");
+    await expect(cards).toHaveCount(10);
+    for (let i = 0; i < 10; i++) {
+      const card = cards.nth(i);
+      const box = (await card.boundingBox())!;
+      const del = (await card.getByRole("button", { name: "Delete video" }).boundingBox())!;
+      expect(del.x + del.width).toBeLessThanOrEqual(box.x + box.width); // not clipped by the card
+    }
+    // The long series name is cut, the number is not: it is its own element, fully in view
+    // (checking the card's text alone would pass even with the number cut off on screen).
+    const number = cards.first().locator("p bdi");
+    await expect(number).toHaveText("#1284");
+    const numberBox = (await number.boundingBox())!;
+    const firstCard = (await cards.first().boundingBox())!;
+    expect(numberBox.x + numberBox.width).toBeLessThanOrEqual(firstCard.x + firstCard.width);
+    await expect(cards.first().locator(".caption-word")).toHaveText("#1284"); // placeholder art shows it too
+    await expect(cards.first()).toContainText("Nov 11, 2026");
+    await expect(cards.nth(1)).toContainText("Credit refunded"); // under a 1,000-character error
+    await ctx.close();
+  });
+
+  test("more than 50 videos: Load more brings the next page (#2)", async ({ page }) => {
+    await signedInUser(page);
+    await page.goto("/dashboard/videos/?data=huge");
+    await expect(page.getByTestId("video-card")).toHaveCount(50);
+    await page.getByRole("button", { name: "Load more videos" }).click();
+    await expect(page.getByTestId("video-card")).toHaveCount(100);
+    await expect(page.getByRole("button", { name: "Load more videos" })).toHaveCount(0);
+  });
+});
+
+test.describe("series list with worst-case data", () => {
+  test("desktop: actions stay in view next to an unbreakable name; counts read naturally (#1, #3, #4)", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await ctx.newPage();
+    await signedInUser(page);
+    await page.goto("/dashboard/series/?data=worst");
+    const table = page.locator("table");
+    const box = (await page.locator("table").locator("..").boundingBox())!;
+    expect((await table.boundingBox())!.width).toBeLessThanOrEqual(box.width + 1);
+    await expect(page.getByRole("button", { name: "Delete Ambient_ASMR_Rain_Sounds_For_Sleep_Deep_Relaxation_Study_Focus_10_Hours_Loop" })).toBeInViewport();
+    await expect(table).toContainText("1,284 videos");
+    await expect(table).toContainText("1 video");
+    await expect(table).toContainText("No videos");
+    await expect(table.getByText("Paused")).toHaveCount(2);
+    await ctx.close();
+  });
+
+  test("phone: a stacked list with status, numbers and actions; the header keeps the page name (#2, #5)", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 320, height: 700 } });
+    const page = await ctx.newPage();
+    await signedInUser(page);
+    await page.goto("/dashboard/series/?data=worst");
+    const list = page.getByRole("list", { name: "Your series" });
+    await expect(list.getByRole("listitem")).toHaveCount(8);
+    await expect(list.getByRole("button", { name: "Resume" }).first()).toBeInViewport();
+    await expect(list.getByRole("listitem").first()).toContainText("1,284 videos published");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+    await expect(page.getByRole("navigation").getByText("Series", { exact: true })).toBeInViewport({ ratio: 1 });
+    await ctx.close();
+  });
+});
+
+test("the plan's series limit: the API refuses and the wizard says so up front (#6)", async ({ page }) => {
+  await signedInUser(page);
+  await createSeriesViaApi(page);
+  const second = await page.request.post("/api/series/", {
+    data: { name: "Second", formats: ["facts"], niche: "More", language: "en", voice: "adam", artStyle: "realism", captionStyle: "bold", frequency: "daily", postTime: "10:00" },
+  });
+  expect(second.status()).toBe(403);
+  expect(((await second.json()) as { error: string }).error).toContain("Your Free plan includes 1 series");
+
+  await page.goto("/dashboard/create/");
+  await expect(page.getByRole("heading", { name: "You've reached your plan's series limit" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "See plans" })).toBeVisible();
+});

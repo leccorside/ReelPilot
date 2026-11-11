@@ -254,8 +254,8 @@
       - **ponto em aberto:** numa rodada sob carga, o nome da etapa 6 apareceu vazio uma vez; não se repetiu em mais de 10 rodadas (provável recarga da página pela recompilação no meio do teste).
     - **Testes:** `src/lib/series-form.test.ts` (7) e 5 testes novos do assistente em `e2e/break-ui.spec.ts`. Resultado: typecheck ✅, lint ✅, Vitest 78/78 ✅, Playwright 38/38 ✅ duas vezes seguidas com o servidor reiniciado a frio.
 
-21. **break-ui na grade de vídeos (2026-11-11), relatório entregue e correções aguardando a escolha da pessoa:**
-    - **Ferramenta:** `devVideos()` em `src/lib/dev-data.ts` (worst com 10 vídeos variados, empty, one e huge com 100, o máximo da API) e `useVideos` ligado ao `?data=`; a mesma grade aparece no detalhe da série. Capturas temporárias em `e2e-shots/`.
+21. **break-ui na grade de vídeos (2026-11-11), com correções (`fix all`):**
+    - **Ferramenta:** `devVideos()` em `src/lib/dev-data.ts` (worst com 10 vídeos variados, empty, one e huge com 100) e `useVideos` ligado ao `?data=`; a mesma grade aparece no detalhe da série.
     - **Achados:**
       - lixeira cortada em 320 px;
       - lista para em 100 sem avisar (`listVideos` limit 100, sem paginação);
@@ -266,8 +266,15 @@
       - "#2" invertido em título árabe;
       - botões desalinhados entre cartões;
       - a palavra da arte repete a série em todos os vídeos.
+    - **Correções (`src/components/dashboard/video-grid.tsx`):**
+      - ações viraram 3 ícones com `shrink-0`, no rodapé do cartão (`flex-col` + `mt-auto`): cabem em 136 px e ficam alinhadas na linha;
+      - título em duas partes: o nome da série pode ser cortado (com `title`), o número `#n` nunca, em `<bdi>` (certo em árabe);
+      - a linha de baixo mostra só a data (e a duração), sem corte;
+      - "Credit refunded" em linha própria, fora do `line-clamp-2` do erro;
+      - a arte mostra o número do vídeo (curto e diferente em cada cartão), e os ícones de progresso e falha descem para o pé da arte;
+      - paginação por cursor: `GET /api/videos` aceita `limit` (padrão 50, máximo 200) e `cursor` (`<createdAt>_<id>` do último vídeo); a ordem é `created_at` em milissegundos + `id`, para não pular nem repetir vídeos com o mesmo horário. A grade usa `useSWRInfinite` e mostra "Load more videos".
 
-22. **break-ui na lista de séries (2026-11-11), relatório entregue e correções aguardando a escolha da pessoa:**
+22. **break-ui na lista de séries (2026-11-11), com correções (`fix all`):**
     - **Ferramenta:** `devSeriesList()` em `src/lib/dev-data.ts` (worst com 8 séries, empty, one e huge com 1000) e `useSeriesList` ligado ao `?data=`.
     - **Achados:**
       - tabela sempre com 1175 px por causa do nome sem espaços: ações fora da tela até em 1280 px e, em 320 px, só os nomes à vista;
@@ -275,6 +282,13 @@
       - "1284 video(s)", "1 video(s)" e "0 video(s)" sem formato nem plural;
       - 1000 séries sem paginação nem limite por plano;
       - "Series" vira "S" no cabeçalho em 320 px.
+    - **Correções (`src/app/dashboard/series/page.tsx`):**
+      - abaixo de `lg` (1024 px), lista empilhada (nome, selo, "Created … · N videos published", ações); a partir de `lg`, tabela sem a coluna Type, com o nome limitado a 28rem e quebrando em até 2 linhas (`overflow-wrap:anywhere`, `title`). Em 768 px e com zoom de 200%, a tabela ainda escondia as ações, por isso o corte ficou em `lg`;
+      - selo "Paused" ao lado do nome;
+      - contagens com `Intl.NumberFormat` e plural ("No videos", "1 video", "1,284 videos"), em `tabular-nums`;
+      - botão "Create Series" só com ícone no celular, para o título "Series" caber.
+    - **Limite de séries por plano (decisão da pessoa: Free = 1):** `maxSeries` em `src/lib/plans.ts` (Free 1, Starter 1, Growth 3, Pro ilimitado). O `createSeries` conta as séries dentro da transação, com `pg_advisory_xact_lock` por usuário (5 criações simultâneas no Free geram 1), e responde `403` (`PlanLimitError`). O `GET /api/me` devolve `limits.series`/`limits.seriesUsed`, e o assistente mostra o aviso de limite logo na entrada, com "See plans". O plano atual saiu para `src/server/plan.ts`.
+    - **Testes:** 6 de API (limites, concorrência, paginação de 120 vídeos sem falhas nem repetições, cursor inválido) e 5 de E2E em `e2e/break-ui.spec.ts`. Os testes de música e de privacidade que criavam uma 2ª série passaram a usar plano pro ou a tela de edição. Resultado: typecheck ✅, lint ✅, Vitest 81/81 ✅, Playwright 43/43 ✅ duas vezes seguidas.
 
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
@@ -308,6 +322,9 @@
   - o middleware também rodava em `/api/auth` e reemitia o cookie de sessão, sobrescrevendo o cookie que o Auth.js apaga ou troca. Correção: as rotas públicas de API saíram do `matcher`.
 - **`update()` do `useSession` sem argumento só faz GET** (não dispara `trigger: "update"`). O perfil chama `update({})`.
 - **E2E: `getByRole("alert")` achava 2 elementos**, porque o Next tem o `__next-route-announcer__` com `role="alert"`. O helper `formError()` procura o alerta dentro do diálogo. Também `toHaveURL(/\/$/)` casava com qualquer página; a página inicial usa uma expressão exata.
+- **`refreshDashboard()` não atualizava a grade paginada:** o `mutate` global do SWR com filtro de chave não revalida caches do `useSWRInfinite`. Cada `useVideos` montado se registra em `pagedLists` (`src/lib/api-client.ts`), que o `refreshDashboard()` também chama.
+- **Expressão regular estragada por `node -e`:** `/^#\d+$/` foi gravada como `/^#d+$/` (o `\d` perdeu a barra no shell), e o número sumia dos cartões. O teste E2E passava enganado porque conferia o texto do cartão; agora confere o `<bdi>` visível e a palavra da arte. Editar código com a ferramenta de edição, nunca por `node -e`/`sed` com barras invertidas.
+- **E2E instável na bateria completa** (testes diferentes estourando 60 s a cada rodada, todos passando isolados): os workers padrão (metade dos núcleos) sobrecarregavam o único servidor de desenvolvimento. `workers: 4` no `playwright.config.ts` deixou a bateria estável e mais rápida (2,2 min contra 2,9 a 4,1).
 - **Aviso de build conhecido e inofensivo:** a `jose` (usada pelo Auth.js) referencia `CompressionStream`, que não existe no runtime Edge. Os tokens não usam compressão.
 - **IP do cliente sem proxy:** o Next mantém um `X-Forwarded-For` enviado pelo cliente (falsificável) e, sem ele, usa o IP do gateway do Docker (igual para todos). O limite por IP só é confiável atrás do Caddy (Passo 19).
 - Do protótipo:
@@ -328,7 +345,8 @@
 - **Vídeos ficam "In queue" para sempre** até o worker (Passo 5). Não há prévia nem arquivo; Publish e Download ficam desativados.
 - **Arquivos órfãos possíveis:** se o armazenamento falhar ao excluir (vídeo, série, conta ou faixa), os arquivos ficam no bucket (o erro vai para o log). Uma varredura periódica entra com o agendador ou a manutenção (Passos 11/18).
 - **Duração da música não é calculada** (`duration_ms` fica vazio). O ffprobe preenche no Passo 9.
-- A lista de vídeos mostra os 100 mais recentes (sem paginação ainda).
+- A lista de séries não é paginada: o limite por plano a mantém pequena (Pro ilimitado; paginar se algum dia passar de centenas).
+- O link "See plans" do aviso de limite leva à tela de cobrança, que ainda não vende planos (Passo 15).
 - A prévia de voz no assistente ainda usa a voz do navegador (o Kokoro entra no Passo 7).
 - **Sem verificação de e-mail nem recuperação de senha** até o Passo 16 (e-mails).
 - Conectar redes sociais ainda não é possível: o botão explica que chega com a publicação automática (Passo 12). Só as conexões criadas pelo seed aparecem.

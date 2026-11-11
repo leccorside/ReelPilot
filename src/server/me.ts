@@ -1,23 +1,15 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { MeDto } from "@/lib/api-types";
-import { FREE_PLAN, planInfo, type PlanId } from "@/lib/plans";
+import { FREE_PLAN, planInfo } from "@/lib/plans";
 import type { Db } from "@/server/db";
 import { getCreditBalance } from "@/server/db/credits";
-import { socialConnections, subscriptions, users } from "@/server/db/schema";
+import { series, socialConnections, users } from "@/server/db/schema";
 import { NotFoundError, ValidationError } from "@/server/errors";
+import { currentPlan } from "@/server/plan";
 import { isValidTimezone } from "@/server/series";
 
-/** Plan that currently applies: the subscription that still counts, or Free. */
-export async function currentPlan(db: Db, userId: string): Promise<PlanId> {
-  const [sub] = await db
-    .select({ plan: subscriptions.plan })
-    .from(subscriptions)
-    .where(and(eq(subscriptions.userId, userId), inArray(subscriptions.status, ["active", "trialing", "past_due"])))
-    .orderBy(desc(subscriptions.createdAt))
-    .limit(1);
-  return sub?.plan ?? "free";
-}
+export { currentPlan };
 
 export async function getMe(db: Db, userId: string): Promise<MeDto> {
   const [user] = await db
@@ -34,18 +26,20 @@ export async function getMe(db: Db, userId: string): Promise<MeDto> {
     .where(eq(users.id, userId));
   if (!user) throw new NotFoundError("Account not found");
 
-  const [planId, balance, connections] = await Promise.all([
+  const [planId, balance, connections, [{ seriesUsed }]] = await Promise.all([
     currentPlan(db, userId),
     getCreditBalance(db, userId),
     db
       .select({ id: socialConnections.id, platform: socialConnections.platform, username: socialConnections.username, status: socialConnections.status })
       .from(socialConnections)
       .where(eq(socialConnections.userId, userId)),
+    db.select({ seriesUsed: sql<number>`count(*)::int` }).from(series).where(eq(series.userId, userId)),
   ]);
   const plan = planInfo(planId);
   return {
     user,
     plan: { id: plan.id, name: plan.name, monthlyCredits: plan.credits },
+    limits: { series: plan.maxSeries, seriesUsed },
     // "allowance" is the size of the credit bar: the monthly credits of the plan (or the signup
     // bonus on Free), never less than the current balance.
     credits: { balance, allowance: Math.max(plan.id === "free" ? FREE_PLAN.credits : plan.credits, balance) },

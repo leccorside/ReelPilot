@@ -151,6 +151,8 @@ export function devMe(dataset: DevDataset): MeDto {
   const me: MeDto = {
     user: { id: "dev-user", name: "Jo", email: "jo@example.com", image: null, timezone: "UTC", emailNotifications: true, autoPublish: true },
     plan: { id: "free", name: "Free", monthlyCredits: 60 },
+    // Room for one series: the wizard stays usable with every dataset.
+    limits: { series: 1, seriesUsed: 0 },
     credits: { balance: 60, allowance: 60 },
     connections: [],
   };

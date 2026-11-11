@@ -8,7 +8,7 @@ import { env } from "@/lib/env";
 import { makeWav } from "@/test/audio-fixtures";
 import { MAX_MUSIC_BYTES } from "./audio-file";
 import { createDb } from "./db";
-import { musicTracks, users } from "./db/schema";
+import { musicTracks, subscriptions, users } from "./db/schema";
 import { NotFoundError, RateLimitedError, TooLargeError, ValidationError } from "./errors";
 import { deleteMusic, importMusic, listMusic, MAX_TRACKS_PER_USER, type MusicDeps, uploadMusic } from "./music";
 import { createSeries, getSeries, updateSeries } from "./series";
@@ -168,6 +168,7 @@ describe("music in series and deletion", () => {
 
   it("links only the user's own tracks to a series", async () => {
     const userId = await newUser();
+    await db.insert(subscriptions).values({ userId, plan: "pro", status: "active" }); // several series
     const other = await newUser();
     const mine = await uploadMusic(deps, userId, { bytes: wav, fileName: "mine.wav" });
     const theirs = await uploadMusic(deps, other, { bytes: wav, fileName: "theirs.wav" });

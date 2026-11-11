@@ -83,7 +83,9 @@ export function useMe() {
 }
 
 export function useSeriesList() {
-  return useSWR<SeriesDto[]>(keys.series, fetcher);
+  const dev = useDevDataset();
+  const real = useSWR<SeriesDto[]>(dev ? null : keys.series, fetcher);
+  return dev ? devResponse(real, devData!.devSeriesList(dev)) : real;
 }
 
 export function useSeries(id: string | undefined) {

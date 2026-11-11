@@ -267,6 +267,15 @@
       - botões desalinhados entre cartões;
       - a palavra da arte repete a série em todos os vídeos.
 
+22. **break-ui na lista de séries (2026-11-11), relatório entregue e correções aguardando a escolha da pessoa:**
+    - **Ferramenta:** `devSeriesList()` em `src/lib/dev-data.ts` (worst com 8 séries, empty, one e huge com 1000) e `useSeriesList` ligado ao `?data=`.
+    - **Achados:**
+      - tabela sempre com 1175 px por causa do nome sem espaços: ações fora da tela até em 1280 px e, em 320 px, só os nomes à vista;
+      - pausada ou ativa só se sabe pelo botão escondido;
+      - "1284 video(s)", "1 video(s)" e "0 video(s)" sem formato nem plural;
+      - 1000 séries sem paginação nem limite por plano;
+      - "Series" vira "S" no cabeçalho em 320 px.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.

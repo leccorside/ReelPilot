@@ -239,3 +239,39 @@ export function devVideos(dataset: DevDataset): VideoDto[] {
       );
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Series list (break-ui on /dashboard/series).
+// ---------------------------------------------------------------------------------------------
+
+const listItem = (n: number, name: string, extra: Partial<SeriesDto> = {}): SeriesDto => ({
+  ...baseSeries(`00000000-0000-4000-b000-${String(n).padStart(12, "0")}`),
+  name,
+  createdAt: new Date(Date.UTC(2026, 10, 11, 12) - n * 86_400_000).toISOString(),
+  ...extra,
+});
+
+const WORST_SERIES_LIST: SeriesDto[] = [
+  listItem(1, LONG_SERIES, { publishedCount: 1284, videoCount: 1290 }),
+  listItem(2, NO_SPACES_SERIES, { publishedCount: 1, videoCount: 1, status: "paused" }),
+  listItem(3, "J", { publishedCount: 0, videoCount: 0 }),
+  listItem(4, "🎃 Halloween especial – Lendas do Brasil", { publishedCount: 12 }),
+  listItem(5, "قصص الرعب من الصحراء", { publishedCount: 3, status: "paused" }),
+  listItem(6, "Truyện ma Việt Nam có thật", { publishedCount: 1000000 }),
+  listItem(7, "<b>Top 5</b> &amp; facts", { publishedCount: 2 }),
+  listItem(8, "Supercalifragilisticexpialidocious", { publishedCount: 0, createdAt: "2025-01-01T03:00:00.000Z" }),
+];
+
+export function devSeriesList(dataset: DevDataset): SeriesDto[] {
+  switch (dataset) {
+    case "worst":
+      return WORST_SERIES_LIST;
+    case "empty":
+      return [];
+    case "one":
+      return [listItem(1, "Bedtime stories", { publishedCount: 1, videoCount: 1 })];
+    case "huge":
+      // Nothing limits how many series an account has, and the list is not paginated.
+      return Array.from({ length: 1000 }, (_, i) => listItem(100 + i, `Daily facts ${String(i + 1).padStart(4, "0")}`, { publishedCount: i * 3, status: i % 4 ? "active" : "paused" }));
+  }
+}

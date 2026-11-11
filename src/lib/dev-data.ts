@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cleanFileName } from "@/server/audio-file"; // pure function, safe in the browser
-import type { MeDto, MusicTrackDto, SeriesDto } from "./api-types";
+import type { MeDto, MusicTrackDto, SeriesDto, VideoDto, VideoStatus } from "./api-types";
 
 // DEVELOPMENT ONLY (break-ui): realistic worst-case datasets swapped in at the data boundary
 // (the SWR hooks in api-client.ts) with ?data=worst|empty|one|huge. "Demo" = the real API.
@@ -177,4 +177,65 @@ export function devMe(dataset: DevDataset): MeDto {
   // Empty: nothing connected and no credits left (someone who spent the signup bonus).
   if (dataset === "empty") return { ...me, credits: { balance: 0, allowance: 60 } };
   return me;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Videos (break-ui on the video grid). Titles are "<series name> #n" as the API builds them.
+// ---------------------------------------------------------------------------------------------
+
+const LONG_SERIES = "Histórias Assustadoras da Vovó Aleksandra Wiśniewska-Kowalczyk – Temporada 2"; // 76 of 80
+const NO_SPACES_SERIES = "Ambient_ASMR_Rain_Sounds_For_Sleep_Deep_Relaxation_Study_Focus_10_Hours_Loop"; // 77 of 80
+// A real-looking failure, cut at the 1000 characters failVideo() keeps.
+const LONG_ERROR = (
+  "ComfyUI error while generating image 4 of 7: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB " +
+  "(GPU 0; 12.00 GiB total capacity; 9.87 GiB already allocated; 1.12 GiB free; 10.21 GiB reserved in total by PyTorch). " +
+  "If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation. See documentation for " +
+  "Memory Management and PYTORCH_CUDA_ALLOC_CONF. Workflow: http://comfyui:8188/api/prompt?client_id=7f3a9c1e-55b2-4e0a-9d61-" +
+  "c0ffee000001&prompt_id=2c9f1b44-8e1d-4a3e-b0c4-3d7a6e5f9a12. "
+).repeat(3).slice(0, 1000);
+
+const video = (n: number, status: VideoStatus, title: string, seriesName: string, extra: Partial<VideoDto> = {}): VideoDto => ({
+  id: `00000000-0000-4000-9000-${String(n).padStart(12, "0")}`,
+  seriesId: "00000000-0000-4000-a000-000000000001",
+  seriesName,
+  title,
+  status,
+  durationMs: status === "ready" || status === "published" ? 41_000 : null,
+  error: null,
+  createdAt: new Date(Date.UTC(2026, 10, 11, 12) - n * 3_600_000).toISOString(),
+  publishedAt: status === "published" ? at : null,
+  publishedUrls: status === "published" ? { youtube: "https://youtube.com/shorts/dQw4w9WgXcQ" } : null,
+  hasFile: status === "ready" || status === "published",
+  ...extra,
+});
+
+const WORST_VIDEOS: VideoDto[] = [
+  video(1, "imaging", `${LONG_SERIES} #1284`, LONG_SERIES),
+  video(2, "failed", `${NO_SPACES_SERIES} #3`, NO_SPACES_SERIES, { error: LONG_ERROR }),
+  video(3, "published", "J #1", "J"),
+  video(4, "voicing", "🎃 Halloween especial – Lendas do Brasil #7", "🎃 Halloween especial – Lendas do Brasil"),
+  video(5, "queued", "قصص الرعب من الصحراء #2", "قصص الرعب من الصحراء"),
+  video(6, "ready", "Truyện ma Việt Nam có thật #4", "Truyện ma Việt Nam có thật"),
+  video(7, "scripting", "<b>Top 5</b> &amp; facts #9", "<b>Top 5</b> &amp; facts"),
+  video(8, "publishing", "Supercalifragilisticexpialidocious #12", "Supercalifragilisticexpialidocious"),
+  video(9, "rendering", "Fatos #2", "Fatos", { createdAt: "2025-01-01T03:00:00.000Z" }),
+  video(10, "failed", "Curiosidades #5", "Curiosidades", { error: "Kokoro TTS unavailable" }),
+];
+
+export function devVideos(dataset: DevDataset): VideoDto[] {
+  switch (dataset) {
+    case "worst":
+      return WORST_VIDEOS;
+    case "empty":
+      return [];
+    case "one":
+      return [video(1, "queued", "Bedtime stories #1", "Bedtime stories")];
+    case "huge":
+      // GET /api/videos returns at most 100: this is everything a busy account ever sees.
+      return Array.from({ length: 100 }, (_, i) =>
+        video(100 + i, (["published", "ready", "queued", "failed", "rendering"] as const)[i % 5], `Daily facts #${1284 - i}`, "Daily facts", {
+          error: i % 5 === 3 ? "Kokoro TTS unavailable" : null,
+        }),
+      );
+  }
 }

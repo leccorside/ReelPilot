@@ -94,9 +94,11 @@ export function useSeries(id: string | undefined) {
 
 /** Videos refresh every 5 seconds while any of them is still being made. */
 export function useVideos(seriesId?: string) {
-  return useSWR<VideoDto[]>(keys.videos(seriesId), fetcher, {
+  const dev = useDevDataset();
+  const real = useSWR<VideoDto[]>(dev ? null : keys.videos(seriesId), fetcher, {
     refreshInterval: (data) => (data?.some((v) => IN_PROGRESS.includes(v.status)) ? 5000 : 0),
   });
+  return dev ? devResponse(real, devData!.devVideos(dev)) : real;
 }
 
 /** Refreshes everything the dashboard shows (after creating/deleting things that move credits). */

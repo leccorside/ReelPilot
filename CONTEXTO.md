@@ -254,6 +254,19 @@
       - **ponto em aberto:** numa rodada sob carga, o nome da etapa 6 apareceu vazio uma vez; não se repetiu em mais de 10 rodadas (provável recarga da página pela recompilação no meio do teste).
     - **Testes:** `src/lib/series-form.test.ts` (7) e 5 testes novos do assistente em `e2e/break-ui.spec.ts`. Resultado: typecheck ✅, lint ✅, Vitest 78/78 ✅, Playwright 38/38 ✅ duas vezes seguidas com o servidor reiniciado a frio.
 
+21. **break-ui na grade de vídeos (2026-11-11), relatório entregue e correções aguardando a escolha da pessoa:**
+    - **Ferramenta:** `devVideos()` em `src/lib/dev-data.ts` (worst com 10 vídeos variados, empty, one e huge com 100, o máximo da API) e `useVideos` ligado ao `?data=`; a mesma grade aparece no detalhe da série. Capturas temporárias em `e2e-shots/`.
+    - **Achados:**
+      - lixeira cortada em 320 px;
+      - lista para em 100 sem avisar (`listVideos` limit 100, sem paginação);
+      - número do vídeo cortado no título;
+      - data escondida na linha "série · data";
+      - "credit refunded" cortado pelo `line-clamp`;
+      - palavra da arte vazando 150 a 727 px e coberta pelo ícone de progresso;
+      - "#2" invertido em título árabe;
+      - botões desalinhados entre cartões;
+      - a palavra da arte repete a série em todos os vídeos.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.

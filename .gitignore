@@ -1,0 +1,25 @@
+# dependências e builds
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# ambiente (segredos) — só o .env.example vai para o repositório
+.env
+.env.*
+!.env.example
+
+# testes
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# sistema
+.DS_Store
+Thumbs.db
+*.log
+
+PASSOS.md
+capture/

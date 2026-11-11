@@ -4,8 +4,12 @@ import { useEffect } from "react";
 import { X } from "lucide-react";
 import { buttonClass } from "../button";
 
-export function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border bg-card text-card-foreground shadow-sm ${className}`}>{children}</div>;
+export function Card({ children, className = "", ...rest }: React.HTMLAttributes<HTMLDivElement> & { "data-testid"?: string }) {
+  return (
+    <div className={`rounded-xl border bg-card text-card-foreground shadow-sm ${className}`} {...rest}>
+      {children}
+    </div>
+  );
 }
 
 export function CardHeader({ title, description, children }: { title: string; description?: string; children?: React.ReactNode }) {
@@ -26,6 +30,7 @@ const BADGE: Record<string, string> = {
   amber: "bg-amber-50 border-amber-200 text-amber-700",
   gray: "bg-muted border-border text-muted-foreground",
   blue: "bg-blue-50 border-blue-200 text-blue-700",
+  red: "bg-red-50 border-red-200 text-red-700",
 };
 
 export function Badge({ children, tone = "primary", className = "" }: { children: React.ReactNode; tone?: keyof typeof BADGE; className?: string }) {

@@ -3,51 +3,53 @@
 import { useState } from "react";
 import { Check, Loader2, Zap } from "lucide-react";
 import { DashboardShell } from "@/components/dashboard/shell";
-import { Badge, Card, CardHeader, Confirm, Modal, Toast } from "@/components/dashboard/ui";
+import { Badge, Card, CardHeader, Modal } from "@/components/dashboard/ui";
 import { buttonClass } from "@/components/button";
-import { PLANS, type Plan, updateDb, useDb } from "@/lib/store";
+import { useMe } from "@/lib/api-client";
+import { PAID_PLANS, type PlanInfo } from "@/lib/plans";
 
-// Plan names, prices and limits are placeholders: the original's billing page is behind a login.
+// Plan names, prices and limits are placeholders until billing with Stripe (Passo 15).
 
 export default function BillingPage() {
-  const db = useDb();
-  const [checkout, setCheckout] = useState<Plan | null>(null);
-  const [paying, setPaying] = useState(false);
-  const [cancel, setCancel] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  if (!db) return <DashboardShell crumbs={[{ label: "Billing" }]}>{null}</DashboardShell>;
+  const { data: me, isLoading } = useMe();
+  const [chosen, setChosen] = useState<PlanInfo | null>(null);
 
-  const current = PLANS.find((p) => p.id === db.plan);
-  const chosen = PLANS.find((p) => p.id === checkout);
+  if (isLoading || !me)
+    return (
+      <DashboardShell crumbs={[{ label: "Dashboard", href: "/dashboard/series/" }, { label: "Billing" }]}>
+        <Card className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </Card>
+      </DashboardShell>
+    );
+
+  const current = PAID_PLANS.find((p) => p.id === me.plan.id);
+  const { balance, allowance } = me.credits;
 
   return (
     <DashboardShell crumbs={[{ label: "Dashboard", href: "/dashboard/series/" }, { label: "Billing" }]}>
       <div className="mx-auto max-w-5xl space-y-6">
         <Card>
           <CardHeader title="Current plan" description={current ? `$${current.price} per month, renews monthly` : "Free trial credits"}>
-            <Badge>{current?.name ?? "Free"}</Badge>
+            <Badge>{me.plan.name}</Badge>
           </CardHeader>
           <div className="px-6 pb-6 space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Credits left this month</span>
-              <span className="font-medium tabular-nums">
-                {db.credits}/{db.creditsTotal}
+              <span className="text-muted-foreground">{current ? "Credits left this month" : "Credits left"}</span>
+              <span className="font-medium tabular-nums" data-testid="billing-credits">
+                {balance}/{allowance}
               </span>
             </div>
             <div className="h-2 rounded-full bg-muted overflow-hidden">
-              <div className="h-full rounded-full bg-primary" style={{ width: `${(db.credits / db.creditsTotal) * 100}%` }} />
+              <div className="h-full rounded-full bg-primary" style={{ width: `${allowance ? Math.min(100, (balance / allowance) * 100) : 0}%` }} />
             </div>
-            {current && (
-              <button className={buttonClass("ghost", "sm", "mt-2 -ml-3 text-muted-foreground")} onClick={() => setCancel(true)}>
-                Cancel subscription
-              </button>
-            )}
+            <p className="pt-1 text-xs text-muted-foreground">One credit creates one video. A video that fails, or that you delete before it starts, gives its credit back.</p>
           </div>
         </Card>
 
         <div className="grid gap-6 md:grid-cols-3">
-          {PLANS.map((p) => {
-            const isCurrent = p.id === db.plan;
+          {PAID_PLANS.map((p) => {
+            const isCurrent = p.id === me.plan.id;
             const popular = p.id === "growth";
             return (
               <Card key={p.id} className={`relative flex flex-col p-6 ${popular ? "border-primary border-2" : ""}`}>
@@ -64,11 +66,7 @@ export default function BillingPage() {
                     </li>
                   ))}
                 </ul>
-                <button
-                  className={buttonClass(popular ? "primary" : "outline", "default", "mt-6 w-full")}
-                  disabled={isCurrent}
-                  onClick={() => setCheckout(p.id)}
-                >
+                <button className={buttonClass(popular ? "primary" : "outline", "default", "mt-6 w-full")} disabled={isCurrent} onClick={() => setChosen(p)}>
                   {isCurrent ? (
                     "Current plan"
                   ) : (
@@ -84,55 +82,20 @@ export default function BillingPage() {
       </div>
 
       <Modal
-        open={!!checkout}
-        onClose={() => !paying && setCheckout(null)}
-        title={`Upgrade to ${chosen?.name ?? ""}`}
-        description={chosen ? `$${chosen.price}/month · ${chosen.credits} videos per month. This rebuild doesn't charge anything.` : undefined}
+        open={!!chosen}
+        onClose={() => setChosen(null)}
+        title={`${chosen?.name ?? ""} plan`}
+        description={chosen ? `$${chosen.price}/month · ${chosen.credits} videos per month.` : undefined}
         footer={
-          <>
-            <button className={buttonClass("outline")} disabled={paying} onClick={() => setCheckout(null)}>
-              Cancel
-            </button>
-            <button
-              className={buttonClass("primary")}
-              disabled={paying}
-              onClick={() => {
-                setPaying(true);
-                window.setTimeout(() => {
-                  updateDb((d) => {
-                    d.plan = chosen!.id;
-                    d.credits = chosen!.credits;
-                    d.creditsTotal = chosen!.credits;
-                  });
-                  setPaying(false);
-                  setCheckout(null);
-                  setToast(`You're on the ${chosen!.name} plan`);
-                }, 900);
-              }}
-            >
-              {paying && <Loader2 className="h-4 w-4 animate-spin" />}
-              Confirm and pay
-            </button>
-          </>
+          <button className={buttonClass("primary")} onClick={() => setChosen(null)}>
+            Got it
+          </button>
         }
-      />
-      <Confirm
-        open={cancel}
-        onClose={() => setCancel(false)}
-        danger
-        title="Cancel your subscription?"
-        description="Your series stop creating new videos and you go back to the free credits."
-        confirmLabel="Cancel subscription"
-        onConfirm={() => {
-          updateDb((d) => {
-            d.plan = "free";
-            d.creditsTotal = 60;
-            d.credits = Math.min(d.credits, 60);
-          });
-          setToast("Subscription cancelled");
-        }}
-      />
-      <Toast message={toast} onDone={() => setToast(null)} />
+      >
+        <p className="text-sm text-muted-foreground">
+          Paid plans aren&apos;t open yet, so nothing is charged. You can keep creating videos with your free credits.
+        </p>
+      </Modal>
     </DashboardShell>
   );
 }

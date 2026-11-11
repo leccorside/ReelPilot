@@ -1,7 +1,11 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 (fundação), 1 (banco de dados) e 2 (autenticação) estão concluídos**.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 (fundação), 1 (banco de dados), 2 (autenticação) e 3 (API do painel) estão concluídos**.
+- **Painel 100% na API** (sem `localStorage`):
+  - séries, vídeos, créditos, plano, preferências e contas sociais vêm do banco, por `src/lib/api-client.ts` (SWR);
+  - as regras ficam em `src/server/series.ts`, `videos.ts` e `me.ts`;
+  - os vídeos gerados ficam **"In queue"** até o worker existir (Passo 5).
 - **Login real** (Auth.js `next-auth@5.0.0-beta.32`, versão fixada por ser beta):
   - e-mail/senha com argon2id e Google, este último ativo só com `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET`;
   - sessão JWT de 2 h, conferida no banco a cada minuto;
@@ -119,6 +123,26 @@
       - os avisos de CSP, Self-XSS e Quirks Mode são das páginas do próprio Google;
       - nenhum dos dois é do app.
 
+16. **Passo 3 concluído (2026-11-11):**
+    - **Servidor:**
+      - `src/server/series.ts`: valida contra as listas do assistente (`z.enum` sobre os ids de `options.ts`), remove repetidos em `formats`/`platforms`, valida o fuso com `Intl.DateTimeFormat`, conta vídeos e publicados, e `deleteSeries` estorna os vídeos na fila;
+      - `src/server/videos.ts`: `createVideo` trava os créditos do usuário com `pg_advisory_xact_lock(hashtextextended('credits:<id>'))`, confere o saldo, cria o vídeo `queued` com o título `<série> #n` e o débito; `failVideo` estorna uma vez só e não mexe em vídeo já falho ou publicado; `refundQueuedVideos` só estorna vídeos que tiveram débito; `deleteVideo` devolve o crédito se o vídeo ainda estava na fila;
+      - `src/server/me.ts`: o plano vigente vem da assinatura ativa (senão, Free); a barra de créditos usa o tamanho do plano (60 no Free); `updateAccount` cuida de nome, fuso, notificações e publicação automática; `deleteConnection`;
+      - `src/server/errors.ts` e `withUser()` em `http.ts` convertem os erros: validação → 400, inexistente → 404, sem crédito → 402.
+    - **Rotas:** `/api/me`, `/api/series`, `/api/series/[id]`, `/api/series/[id]/videos`, `/api/videos`, `/api/videos/[id]` e `/api/social-connections/[id]`; `PATCH /api/account` agora devolve o `/api/me` completo.
+    - **Compartilhado:** `src/lib/api-types.ts` (formato das respostas), `src/lib/plans.ts` (planos, que saíram do store), `FREQUENCIES` com os ids do banco e `optionName()` em `options.ts`. O `Badge` ganhou o tom `red`, e o `Card` aceita atributos HTML.
+    - **Telas:**
+      - lista de séries, detalhe e assistente (cria a série e enfileira o primeiro vídeo);
+      - grade de vídeos: 9 estados com rótulos, mensagem de erro com "credit refunded", Publish e Download desativados com explicação (passos 10 e 12) e a prévia simulada do protótipo removida;
+      - planos: plano e saldo reais; o upgrade avisa que ainda não há cobrança (Passo 15);
+      - ajustes: perfil e preferências salvos no servidor com atualização otimista; contas sociais vindas da tabela; "Connect" explica que chega com a publicação automática (Passo 12);
+      - menu lateral com o saldo real (`data-testid="credits-left"`);
+      - o aviso de música no assistente diz que a trilha ainda não é salva (Passo 4).
+    - **`src/lib/store.ts` apagado.**
+    - **Testes:** `src/server/dashboard-api.test.ts` (15 testes de regras, entre eles 10 cliques simultâneos com 3 créditos gerando exatamente 3 vídeos), `e2e/dashboard.spec.ts` (6 testes: assistente, gerar e excluir com estorno, pausar e excluir série com estorno, isolamento entre contas no mesmo navegador, preferências e planos) e `smoke.spec.ts` atualizado para criar a série pela API.
+    - **Defeito encontrado pelo E2E e corrigido:** ao excluir o último vídeo, a grade trocava para "No videos yet" e desmontava o aviso "Its credit is back". Agora o aviso e os diálogos ficam sempre montados.
+    - **Resultado:** typecheck ✅, lint ✅, Vitest 52/52 ✅, Playwright 20/20 ✅ duas vezes seguidas, API na imagem de produção ✅ (criar série, gerar vídeo, saldo 59, 401 sem login).
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.
@@ -128,6 +152,9 @@
 - **Portas 3100 e 8125:** a 3000 e a 8025 são usadas pelo projeto `ajudaisocial`, que sobe junto com o Docker.
 - **Node 24 LTS** (`node:24.22.1-alpine3.24`) nas imagens; todas as imagens com versão fixada.
 - **Sessão JWT de 2 h com conferência no banco a cada minuto** (decisão da pessoa no Passo 2). Ela troca a revogação instantânea por simplicidade; o `session_version` dá o "sair de todos os dispositivos" com atraso de até 1 minuto.
+- **404, e não 403, para registros de outro usuário** (e para ids malformados): não revela se o registro existe.
+- **Excluir vídeo na fila devolve o crédito; vídeo em produção ou pronto não.** Vídeo que falha é sempre estornado.
+- **Telas sem simulação:** o que depende de passos futuros (música, publicar, baixar, pagar, conectar redes) aparece desativado ou com aviso honesto, em vez de fingir que funciona.
 - **Barra final das URLs feita pelo middleware** (`skipTrailingSlashRedirect`), só para páginas. A API aceita os dois formatos.
 - Estilos de arte com nome de marca registrada ("Disney", "Ghibli", "Lego") serão renomeados no Passo 8.
 - Sem confirmação de permissão: nome, logotipo, fotos, depoimentos e textos longos (FAQ, termos, privacidade) foram substituídos por versões próprias. A busca por semelhança visual com o original deixou de ser objetivo; marca e textos definitivos ficam para o Passo 17.
@@ -157,15 +184,19 @@
   - `favicon.ico` → criado em `public/`.
 
 ## Pendências
-- **Próximo: Passo 3 (API de séries, vídeos e créditos)**, aguardando autorização.
+- **Próximo: Passo 4 (armazenamento de arquivos: música, uploads e limpeza)**, aguardando autorização.
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- O banco existe, mas o painel ainda grava as séries, os vídeos e os créditos no navegador até o Passo 3 (API). Esses dados **não são separados por usuário**: duas contas no mesmo navegador veem as mesmas séries.
+- **Vídeos ficam "In queue" para sempre** até o worker (Passo 5). Não há prévia nem arquivo; Publish e Download ficam desativados.
+- A música escolhida no assistente **não é salva** até o Passo 4.
+- A lista de vídeos mostra os 100 mais recentes (sem paginação ainda).
+- A prévia de voz no assistente ainda usa a voz do navegador (o Kokoro entra no Passo 7).
 - **Sem verificação de e-mail nem recuperação de senha** até o Passo 16 (e-mails).
-- Preferências (publicar automaticamente, notificações, fuso) e contas sociais nos ajustes ainda ficam no navegador (passos 3 e 12).
-- Os nomes do assistente (por exemplo "1 video per day") viraram enums no banco (`daily`, `twice_daily`, `three_per_week`, `weekly`); o mapeamento entre os dois entra no Passo 3. Vídeos são simulados, o pagamento não cobra e a conexão social pede só o @.
+- Conectar redes sociais ainda não é possível: o botão explica que chega com a publicação automática (Passo 12). Só as conexões criadas pelo seed aparecem.
+- Não há cobrança: o upgrade de plano só explica que os planos pagos ainda não abriram (Passo 15).
+- As preferências "publicar automaticamente" e "notificações por e-mail" já ficam salvas, mas só terão efeito nos passos 12 e 16.
 - O Kokoro e o ComfyUI ainda não estão no compose (passos 7 e 8). Com a IA rodando, nada mais pode ocupar a VRAM da RTX 3060.
 - Produção ainda sem HTTPS, worker, agendador e backup (Passo 19).

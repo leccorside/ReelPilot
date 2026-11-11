@@ -4,6 +4,9 @@ import { env } from "@/lib/env";
 import * as schema from "./schema";
 
 export type Db = PostgresJsDatabase<typeof schema>;
+/** An open transaction (same query API as Db, without starting a new transaction). */
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+export type DbOrTx = Db | Tx;
 
 /** Creates a Drizzle client for a connection string (used by tests, scripts and the app). */
 export function createDb(url: string, options: { max?: number } = {}) {

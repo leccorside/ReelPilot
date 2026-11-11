@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { signOut, useSession } from "next-auth/react";
+import { Loader2 } from "lucide-react";
 import { DashboardShell } from "@/components/dashboard/shell";
 import { Badge, Card, CardHeader, Confirm, Modal, Switch, Toast } from "@/components/dashboard/ui";
 import { buttonClass } from "@/components/button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "@/components/icons";
-import { resetDb, updateDb, useDb } from "@/lib/store";
+import { api, ApiError, useMe } from "@/lib/api-client";
+import type { MeDto } from "@/lib/api-types";
 import { PLATFORMS } from "@/lib/options";
 
 const ICONS = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: YoutubeIcon } as const;
@@ -14,54 +16,86 @@ const field =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-60";
 const TIMEZONES = ["UTC", "America/New_York", "America/Los_Angeles", "America/Sao_Paulo", "Europe/London", "Europe/Prague", "Asia/Kolkata", "Asia/Tokyo"];
 
+type Prefs = Partial<Pick<MeDto["user"], "name" | "timezone" | "emailNotifications" | "autoPublish">>;
+
 export default function SettingsPage() {
-  const db = useDb();
-  const { data: session, update } = useSession();
-  const user = session?.user;
+  const { data: me, mutate } = useMe();
+  const { update } = useSession();
   const [name, setName] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
-  const [handle, setHandle] = useState("");
+  const [disconnect, setDisconnect] = useState<MeDto["connections"][number] | null>(null);
   const [del, setDel] = useState(false);
   const [everywhere, setEverywhere] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  if (!db || !user) return <DashboardShell crumbs={[{ label: "Settings" }]}>{null}</DashboardShell>;
 
+  if (!me)
+    return (
+      <DashboardShell crumbs={[{ label: "Dashboard", href: "/dashboard/series/" }, { label: "Settings" }]}>
+        <Card className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </Card>
+      </DashboardShell>
+    );
+
+  const user = me.user;
   const shownName = name ?? user.name ?? "";
+  const timezones = TIMEZONES.includes(user.timezone) ? TIMEZONES : [user.timezone, ...TIMEZONES];
+
+  /** Saves profile/preference fields; switches update on screen right away and roll back on error. */
+  const save = async (prefs: Prefs, done?: string) => {
+    const previous = me;
+    await mutate({ ...me, user: { ...me.user, ...prefs } }, { revalidate: false });
+    try {
+      await mutate(await api<MeDto>("/api/account/", { method: "PATCH", body: prefs }), { revalidate: false });
+      if (done) setToast(done);
+      return true;
+    } catch (e) {
+      await mutate(previous, { revalidate: false });
+      setToast(e instanceof ApiError ? e.message : "Could not save your settings");
+      return false;
+    }
+  };
 
   const saveProfile = async () => {
     setSaving(true);
-    const res = await fetch("/api/account/", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: shownName }),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setToast(body.error ?? "Could not save your profile");
-      return;
+    if (await save({ name: shownName.trim() }, "Profile saved")) {
+      // With an argument, update() POSTs to the session endpoint (trigger "update"), and src/auth.ts
+      // re-reads the profile from the database. The argument's content is ignored on purpose.
+      await update({});
+      setName(null);
     }
-    // With an argument, update() POSTs to the session endpoint (trigger "update"), and src/auth.ts
-    // re-reads the profile from the database. Without one it only re-fetches the current token.
-    // The argument's content is ignored on purpose: the client never sets session fields.
-    await update({});
-    setName(null);
-    setToast("Profile saved");
+    setSaving(false);
+  };
+
+  const removeConnection = async (c: MeDto["connections"][number]) => {
+    try {
+      await api(`/api/social-connections/${c.id}/`, { method: "DELETE" });
+      await mutate();
+      setToast(`${PLATFORMS.find((p) => p.id === c.platform)?.name ?? "Account"} disconnected`);
+    } catch (e) {
+      setToast(e instanceof ApiError ? e.message : "Could not disconnect the account");
+    }
   };
 
   const signOutEverywhere = async () => {
-    const res = await fetch("/api/account/sign-out-everywhere/", { method: "POST" });
-    if (!res.ok) return setToast("Could not sign out other devices");
-    await signOut({ redirectTo: "/login/" });
+    try {
+      await api("/api/account/sign-out-everywhere/", { method: "POST" });
+      await signOut({ redirectTo: "/login/" });
+    } catch {
+      setToast("Could not sign out other devices");
+    }
   };
 
   const deleteAccount = async () => {
-    const res = await fetch("/api/account/", { method: "DELETE" });
-    if (!res.ok) return setToast("Could not delete your account");
-    resetDb(); // the dashboard data that still lives in this browser (until Passo 3)
-    await signOut({ redirectTo: "/" });
+    try {
+      await api("/api/account/", { method: "DELETE" });
+      await signOut({ redirectTo: "/" });
+    } catch {
+      setToast("Could not delete your account");
+    }
   };
+
   const platform = PLATFORMS.find((p) => p.id === connecting);
 
   return (
@@ -83,7 +117,7 @@ export default function SettingsPage() {
               </label>
               <label className="space-y-2 text-sm font-medium">
                 <span>Email</span>
-                <input className={field} value={user.email ?? ""} disabled />
+                <input className={field} value={user.email} disabled />
               </label>
             </div>
             <button className={buttonClass("primary")} disabled={name === null || !shownName.trim() || saving}>
@@ -97,7 +131,7 @@ export default function SettingsPage() {
           <div className="divide-y px-6 pb-2">
             {PLATFORMS.map((p) => {
               const Icon = ICONS[p.id as keyof typeof ICONS];
-              const value = db.connected[p.id];
+              const conn = me.connections.find((c) => c.platform === p.id);
               return (
                 <div key={p.id} className="flex items-center justify-between gap-4 py-4">
                   <div className="flex items-center gap-3 min-w-0">
@@ -106,30 +140,18 @@ export default function SettingsPage() {
                     </span>
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{p.name}</p>
-                      <p className="truncate text-xs text-muted-foreground">{value ?? "Not connected"}</p>
+                      <p className="truncate text-xs text-muted-foreground">{conn?.username ?? "Not connected"}</p>
                     </div>
                   </div>
-                  {value ? (
+                  {conn ? (
                     <div className="flex items-center gap-2">
-                      <Badge tone="green">Connected</Badge>
-                      <button
-                        className={buttonClass("outline", "sm")}
-                        onClick={() => {
-                          updateDb((d) => void (d.connected[p.id] = null));
-                          setToast(`${p.name} disconnected`);
-                        }}
-                      >
+                      <Badge tone={conn.status === "active" ? "green" : "amber"}>{conn.status === "active" ? "Connected" : "Reconnect needed"}</Badge>
+                      <button className={buttonClass("outline", "sm")} onClick={() => setDisconnect(conn)}>
                         Disconnect
                       </button>
                     </div>
                   ) : (
-                    <button
-                      className={buttonClass("outline", "sm")}
-                      onClick={() => {
-                        setHandle("");
-                        setConnecting(p.id);
-                      }}
-                    >
+                    <button className={buttonClass("outline", "sm")} onClick={() => setConnecting(p.id)}>
                       Connect
                     </button>
                   )}
@@ -147,30 +169,27 @@ export default function SettingsPage() {
                 <p className="text-sm font-medium">Publish automatically</p>
                 <p className="text-xs text-muted-foreground">Post finished videos to your connected accounts right away</p>
               </div>
-              <Switch label="Publish automatically" checked={db.settings.autoPublish} onChange={(v) => updateDb((d) => void (d.settings.autoPublish = v))} />
+              <Switch label="Publish automatically" checked={user.autoPublish} onChange={(v) => void save({ autoPublish: v })} />
             </div>
             <div className="flex items-center justify-between gap-4 py-4">
               <div>
                 <p className="text-sm font-medium">Email notifications</p>
                 <p className="text-xs text-muted-foreground">Get an email when a video is published</p>
               </div>
-              <Switch
-                label="Email notifications"
-                checked={db.settings.emailNotifications}
-                onChange={(v) => updateDb((d) => void (d.settings.emailNotifications = v))}
-              />
+              <Switch label="Email notifications" checked={user.emailNotifications} onChange={(v) => void save({ emailNotifications: v })} />
             </div>
             <div className="flex items-center justify-between gap-4 py-4">
               <div>
                 <p className="text-sm font-medium">Time zone</p>
-                <p className="text-xs text-muted-foreground">Used for posting times</p>
+                <p className="text-xs text-muted-foreground">Used for posting times of new series</p>
               </div>
               <select
+                aria-label="Time zone"
                 className={`${field} w-48`}
-                value={db.settings.timezone}
-                onChange={(e) => updateDb((d) => void (d.settings.timezone = e.target.value))}
+                value={user.timezone}
+                onChange={(e) => void save({ timezone: e.target.value }, "Time zone saved")}
               >
-                {TIMEZONES.map((t) => (
+                {timezones.map((t) => (
                   <option key={t}>{t}</option>
                 ))}
               </select>
@@ -198,29 +217,25 @@ export default function SettingsPage() {
         open={!!connecting}
         onClose={() => setConnecting(null)}
         title={`Connect ${platform?.name ?? ""}`}
-        description="Enter the account handle to connect. In the real service this opens the platform's own sign-in."
+        description="Connecting your account opens the platform's own sign-in."
         footer={
-          <>
-            <button className={buttonClass("outline")} onClick={() => setConnecting(null)}>
-              Cancel
-            </button>
-            <button
-              className={buttonClass("primary")}
-              disabled={handle.trim().length < 2}
-              onClick={() => {
-                const h = handle.trim().startsWith("@") ? handle.trim() : `@${handle.trim()}`;
-                updateDb((d) => void (d.connected[connecting!] = h));
-                setToast(`${platform?.name} connected`);
-                setConnecting(null);
-              }}
-            >
-              Connect
-            </button>
-          </>
+          <button className={buttonClass("primary")} onClick={() => setConnecting(null)}>
+            Got it
+          </button>
         }
       >
-        <input className={field} placeholder="@yourchannel" value={handle} onChange={(e) => setHandle(e.target.value)} autoFocus />
+        <p className="text-sm text-muted-foreground">
+          Connecting {platform?.name ?? "accounts"} arrives together with automatic posting. Until then your videos stay in your library.
+        </p>
       </Modal>
+      <Confirm
+        open={!!disconnect}
+        onClose={() => setDisconnect(null)}
+        title="Disconnect this account?"
+        description="Your series stop posting to it."
+        confirmLabel="Disconnect"
+        onConfirm={() => disconnect && void removeConnection(disconnect)}
+      />
       <Confirm
         open={del}
         onClose={() => setDel(false)}

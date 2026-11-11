@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { ChevronRight, ChevronsUpDown, CreditCard, Film, Info, Layers, LogOut, Menu, Settings, X, Zap } from "lucide-react";
 import { Logo } from "../logo";
-import { type Db, useDb } from "@/lib/store";
+import { useMe } from "@/lib/api-client";
+import type { MeDto } from "@/lib/api-types";
 
 type SessionUser = { name?: string | null; email?: string | null };
 
@@ -56,10 +57,10 @@ function UserMenu({ user }: { user: SessionUser }) {
   );
 }
 
-export function Sidebar({ db, user, onNavigate }: { db: Db | null; user: SessionUser | null; onNavigate?: () => void }) {
+export function Sidebar({ me, user, onNavigate }: { me: MeDto | undefined; user: SessionUser | null; onNavigate?: () => void }) {
   const path = usePathname() || "";
-  const credits = db?.credits ?? 60;
-  const total = db?.creditsTotal ?? 60;
+  const credits = me?.credits.balance;
+  const total = me?.credits.allowance ?? 0;
   return (
     <>
       <div className="flex h-16 items-center px-6 md:px-10">
@@ -91,12 +92,15 @@ export function Sidebar({ db, user, onNavigate }: { db: Db | null; user: Session
             <span className="flex items-center gap-1" title="One credit creates one video. Credits renew every month.">
               Credits left <Info className="h-3 w-3" />
             </span>
-            <span className="tabular-nums">
-              {credits}/{total}
+            <span className="tabular-nums" data-testid="credits-left">
+              {credits === undefined ? "…" : `${credits}/${total}`}
             </span>
           </div>
           <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(0, Math.min(100, (credits / total) * 100))}%` }} />
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{ width: `${credits === undefined || total === 0 ? 0 : Math.max(0, Math.min(100, (credits / total) * 100))}%` }}
+            />
           </div>
         </div>
         <Link
@@ -115,17 +119,15 @@ export function Sidebar({ db, user, onNavigate }: { db: Db | null; user: Session
 export type Crumb = { label: string; href?: string };
 
 export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[]; actions?: React.ReactNode; children: React.ReactNode }) {
-  const db = useDb();
+  const { data: me } = useMe();
   // The dashboard layout guarantees a session; the middleware sends visitors without one to /login.
   const user = useSession().data?.user ?? null;
   const [drawer, setDrawer] = useState(false);
 
-  if (!db) return <div className="min-h-screen bg-background" />;
-
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden md:flex flex-col w-64 shrink-0 bg-background border-r sticky top-0 h-screen">
-        <Sidebar db={db} user={user} />
+        <Sidebar me={me} user={user} />
       </aside>
       {drawer && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -134,7 +136,7 @@ export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[];
             <button className="absolute right-3 top-5" aria-label="Close menu" onClick={() => setDrawer(false)}>
               <X className="h-5 w-5" />
             </button>
-            <Sidebar db={db} user={user} onNavigate={() => setDrawer(false)} />
+            <Sidebar me={me} user={user} onNavigate={() => setDrawer(false)} />
           </aside>
         </div>
       )}

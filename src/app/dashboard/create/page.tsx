@@ -8,8 +8,9 @@ import { DashboardShell } from "@/components/dashboard/shell";
 import { Scene } from "@/components/art";
 import { buttonClass } from "@/components/button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "@/components/icons";
-import { generateVideo, uid, updateDb, useDb } from "@/lib/store";
-import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, LANGUAGES, PLATFORMS, VOICES } from "@/lib/options";
+import { api, ApiError, refreshDashboard, useMe } from "@/lib/api-client";
+import type { SeriesDto } from "@/lib/api-types";
+import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, VOICES } from "@/lib/options";
 
 const STEPS = ["Choose Formats & Niche", "Language & Voice", "Background Music", "Art Style", "Caption Style", "Schedule & Publish"];
 const PLATFORM_ICON = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: YoutubeIcon } as const;
@@ -50,7 +51,8 @@ function CaptionSample({ id }: { id: string }) {
 
 export default function CreateSeriesPage() {
   const router = useRouter();
-  const db = useDb();
+  const { data: me } = useMe();
+  const connected = (platform: string) => me?.connections.find((c) => c.platform === platform && c.status === "active")?.username;
   const fileInput = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(0);
   const [formats, setFormats] = useState<string[]>([]);
@@ -66,9 +68,10 @@ export default function CreateSeriesPage() {
   const [caption, setCaption] = useState("");
   const [name, setName] = useState("");
   const [platforms, setPlatforms] = useState<string[]>([]);
-  const [frequency, setFrequency] = useState(FREQUENCIES[0]);
+  const [frequency, setFrequency] = useState<FrequencyId>(FREQUENCIES[0].id);
   const [time, setTime] = useState("18:00");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const canContinue = [
     formats.length > 0 && niche.trim().length >= 3,
@@ -118,30 +121,28 @@ export default function CreateSeriesPage() {
       window.scrollTo({ top: 0 });
       return;
     }
+    void save();
+  };
+
+  const save = async () => {
     setSaving(true);
-    const id = uid();
-    updateDb((d) => {
-      d.series.unshift({
-        id,
-        name: name.trim(),
-        type: "Voiceover",
-        formats,
-        niche: niche.trim(),
-        language,
-        voice,
-        musicUrls: urls.split("\n").map((u) => u.trim()).filter(Boolean),
-        musicFiles: files,
-        artStyle: art,
-        captionStyle: caption,
-        platforms,
-        frequency,
-        postTime: time,
-        status: "active",
-        createdAt: Date.now(),
+    setSaveError(null);
+    let created: SeriesDto;
+    try {
+      // Background music is stored from Passo 4 (file storage) on; the series is created without it for now.
+      created = await api<SeriesDto>("/api/series/", {
+        method: "POST",
+        body: { name: name.trim(), formats, niche: niche.trim(), language, voice, artStyle: art, captionStyle: caption, platforms, frequency, postTime: time },
       });
-    });
-    generateVideo(id);
-    window.setTimeout(() => router.push(`/dashboard/series/${id}/`), 600);
+    } catch (e) {
+      setSaveError(e instanceof ApiError ? e.message : "Could not create the series. Please try again.");
+      setSaving(false);
+      return;
+    }
+    // The first video goes straight to the queue (1 credit). Without credits the series still exists.
+    await api(`/api/series/${created.id}/videos/`, { method: "POST" }).catch(() => undefined);
+    await refreshDashboard();
+    router.push(`/dashboard/series/${created.id}/`);
   };
 
   return (
@@ -242,6 +243,9 @@ export default function CreateSeriesPage() {
         {step === 2 && (
           <div className="space-y-6">
             <p className="text-sm text-muted-foreground">Add background music to your video</p>
+            <p role="note" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Background music isn&apos;t saved yet: it arrives with the next update. For now your series is created without music.
+            </p>
             <div className="space-y-3">
               <label htmlFor="urls" className={label}>
                 TikTok Sound URLs
@@ -334,7 +338,7 @@ export default function CreateSeriesPage() {
           </div>
         )}
 
-        {step === 5 && db && (
+        {step === 5 && (
           <div className="space-y-6">
             <p className="text-sm text-muted-foreground">Name your series and choose where and how often it posts</p>
             <div className="space-y-3">
@@ -348,7 +352,7 @@ export default function CreateSeriesPage() {
               <div className="grid gap-3 sm:grid-cols-3">
                 {PLATFORMS.map((p) => {
                   const Icon = PLATFORM_ICON[p.id as keyof typeof PLATFORM_ICON];
-                  const handle = db.connected[p.id];
+                  const handle = connected(p.id);
                   const on = platforms.includes(p.id);
                   return (
                     <button
@@ -366,7 +370,7 @@ export default function CreateSeriesPage() {
                   );
                 })}
               </div>
-              {platforms.some((p) => !db.connected[p]) && (
+              {platforms.some((p) => !connected(p)) && (
                 <p className="text-xs text-muted-foreground">
                   Videos are kept in your library until you connect the account in{" "}
                   <Link href="/dashboard/settings/" className="underline">
@@ -381,9 +385,17 @@ export default function CreateSeriesPage() {
                 <label htmlFor="freq" className={label}>
                   Posting frequency
                 </label>
-                <select id="freq" className={`${field} h-10`} value={frequency} onChange={(e) => setFrequency(e.target.value)} onBlur={(e) => setFrequency(e.target.value)}>
+                <select
+                  id="freq"
+                  className={`${field} h-10`}
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value as FrequencyId)}
+                  onBlur={(e) => setFrequency(e.target.value as FrequencyId)}
+                >
                   {FREQUENCIES.map((f) => (
-                    <option key={f}>{f}</option>
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -397,6 +409,11 @@ export default function CreateSeriesPage() {
           </div>
         )}
 
+        {saveError && (
+          <p role="alert" className="mt-6 text-sm text-destructive">
+            {saveError}
+          </p>
+        )}
         <div className="mt-8 flex items-center justify-between">
           {step > 0 ? (
             <button type="button" className={buttonClass("outline")} onClick={() => setStep(step - 1)}>

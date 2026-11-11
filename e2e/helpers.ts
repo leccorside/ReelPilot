@@ -23,6 +23,29 @@ export async function signInViaUi(page: Page, email: string, password = PASSWORD
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 
+export const WIZARD = {
+  name: "E2E Mysteries",
+  formats: ["storytelling"],
+  niche: "Unsolved mysteries and true crime",
+  language: "en",
+  voice: "adam",
+  artStyle: "realism",
+  captionStyle: "bold",
+  platforms: [],
+  frequency: "daily",
+  postTime: "18:00",
+};
+
+/** Creates a series for the signed-in user through the API; returns its id. */
+export async function createSeriesViaApi(page: Page, overrides: Record<string, unknown> = {}) {
+  const res = await page.request.post("/api/series/", { data: { ...WIZARD, ...overrides } });
+  expect(res.status(), await res.text()).toBe(201);
+  return ((await res.json()) as { id: string }).id;
+}
+
+/** "balance/allowance" shown in the sidebar. */
+export const creditsLeft = (page: Page) => page.getByTestId("credits-left");
+
 /** A fresh, signed-in account; ends on the dashboard. */
 export async function signedInUser(page: Page) {
   const email = await registerViaApi(page);

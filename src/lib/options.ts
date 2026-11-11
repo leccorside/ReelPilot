@@ -51,4 +51,17 @@ export const PLATFORMS = [
   { id: "youtube", name: "YouTube" },
 ];
 
-export const FREQUENCIES = ["1 video per day", "2 videos per day", "3 videos per week", "1 video per week"];
+/** Ids match the posting_frequency enum in the database. */
+export const FREQUENCIES = [
+  { id: "daily", name: "1 video per day" },
+  { id: "twice_daily", name: "2 videos per day" },
+  { id: "three_per_week", name: "3 videos per week" },
+  { id: "weekly", name: "1 video per week" },
+] as const;
+
+export type FrequencyId = (typeof FREQUENCIES)[number]["id"];
+
+/** Name of an option by id (falls back to the id itself). */
+export function optionName(list: readonly { id: string; name: string }[], id: string): string {
+  return list.find((x) => x.id === id)?.name ?? id;
+}

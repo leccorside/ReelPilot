@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { InsufficientCreditsError, NotFoundError, ValidationError } from "@/server/errors";
 
 /** Id of the signed-in user (session checked against the database), or null. */
 export async function currentUserId(): Promise<string | null> {
@@ -19,5 +20,26 @@ export async function readJson(req: Request): Promise<unknown> {
     return await req.json();
   } catch {
     return undefined;
+  }
+}
+
+export function json(data: unknown, status = 200) {
+  return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+/**
+ * Runs a route body for the signed-in user and turns domain errors into HTTP answers:
+ * ValidationError → 400, NotFoundError → 404, InsufficientCreditsError → 402.
+ */
+export async function withUser(handler: (userId: string) => Promise<Response>): Promise<Response> {
+  const userId = await currentUserId();
+  if (!userId) return unauthorized();
+  try {
+    return await handler(userId);
+  } catch (e) {
+    if (e instanceof ValidationError) return jsonError(400, e.message);
+    if (e instanceof NotFoundError) return jsonError(404, e.message);
+    if (e instanceof InsufficientCreditsError) return jsonError(402, e.message);
+    throw e;
   }
 }

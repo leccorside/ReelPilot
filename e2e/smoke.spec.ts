@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { signedInUser } from "./helpers";
+import { createSeriesViaApi, signedInUser } from "./helpers";
 
 test("home page renders the hero", async ({ page }) => {
   await page.goto("/");
@@ -22,39 +22,11 @@ test("health endpoint reports every service as up", async ({ request }) => {
 
 test("dashboard redirects to series, and a series opens on its own route", async ({ page }) => {
   await signedInUser(page);
-  // Series still live in the browser store until the API arrives (Passo 3): seed one.
-  await page.evaluate(() => {
-    window.localStorage.setItem(
-      "reelpilot-db-v1",
-      JSON.stringify({
-        series: [
-          {
-            id: "s1e2e",
-            name: "E2E Mysteries",
-            type: "Voiceover",
-            formats: ["storytelling"],
-            niche: "Unsolved mysteries",
-            language: "en",
-            voice: "adam",
-            musicUrls: [],
-            musicFiles: [],
-            artStyle: "realism",
-            captionStyle: "bold",
-            platforms: [],
-            frequency: "1 video per day",
-            postTime: "18:00",
-            status: "active",
-            createdAt: Date.now(),
-          },
-        ],
-        videos: [],
-      }),
-    );
-  });
+  const id = await createSeriesViaApi(page);
 
   await page.goto("/dashboard/");
   await expect(page).toHaveURL(/\/dashboard\/series\/$/);
   await page.getByRole("link", { name: "E2E Mysteries" }).first().click();
-  await expect(page).toHaveURL(/\/dashboard\/series\/s1e2e\/$/);
+  await expect(page).toHaveURL(new RegExp(`/dashboard/series/${id}/$`));
   await expect(page.getByRole("heading", { name: "E2E Mysteries" })).toBeVisible();
 });

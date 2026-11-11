@@ -421,7 +421,7 @@ reelpilot/
 |---|---|
 | `src/app` | Páginas, layouts e rotas da API |
 | `src/components` | Componentes visuais reutilizáveis |
-| `src/lib` | Utilitários, configurações e store provisório |
+| `src/lib` | Utilitários compartilhados: opções do assistente, planos, tipos da API e cliente da API (SWR) |
 | `src/server` | Lógica exclusiva do servidor |
 | `src/server/db/schema.ts` | Schema do banco (Drizzle): usuários, séries, vídeos, etapas, créditos, assinaturas e redes sociais |
 | `src/server/db/credits.ts` | Saldo de créditos, calculado pela soma do extrato |
@@ -429,6 +429,9 @@ reelpilot/
 | `src/server/accounts.ts` | Cadastro, verificação de senha, limites de tentativas e versão de sessão |
 | `src/server/password.ts` | Hash de senha com argon2id |
 | `src/server/rate-limit.ts` | Contadores de tentativas no Redis |
+| `src/server/series.ts` | Séries: validação contra as opções do assistente e acesso só do dono |
+| `src/server/videos.ts` | Vídeos e créditos: débito com trava por usuário, estornos |
+| `src/server/me.ts` | Conta: plano, saldo, preferências e contas sociais |
 | `src/auth.ts` | Configuração completa do Auth.js (provedores, sessão JWT, conferência no banco) |
 | `src/auth.config.ts` | Parte da configuração que roda no Edge (usada pelo middleware) |
 | `src/middleware.ts` | Protege `/dashboard` e a API privada; adiciona a barra final às URLs de páginas |
@@ -469,6 +472,31 @@ Caso alguma configuração obrigatória esteja ausente ou inválida, o servidor 
 - Gerar a `ENCRYPTION_KEY` com `openssl rand -base64 32` e guardá-la com cuidado: sem ela, os tokens das redes sociais salvos no banco ficam ilegíveis.
 - Gerar o `AUTH_SECRET` da mesma forma. Trocá-lo desconecta todos os usuários.
 - Usar `AUTH_RATE_LIMIT_SCALE=1` em produção. O valor maior (50) serve só para o desenvolvimento, onde os testes de ponta a ponta fazem muitos logins seguidos.
+
+---
+
+## 🔌 API do painel
+
+Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou id inválido respondem `404`, para não revelar que existe.
+
+| Método e rota | O que faz |
+|---|---|
+| `GET /api/me` | Perfil, preferências, plano, saldo de créditos e contas sociais conectadas |
+| `PATCH /api/account` | Atualiza nome, fuso, notificações por e-mail e publicação automática |
+| `GET /api/series` | Séries do usuário, com total de vídeos e de publicados |
+| `POST /api/series` | Cria uma série com os campos do assistente |
+| `GET` / `PATCH` / `DELETE /api/series/:id` | Detalhe, edição (inclusive pausar e retomar) e exclusão |
+| `POST /api/series/:id/videos` | Coloca um vídeo novo na fila e cobra 1 crédito (`402` sem crédito) |
+| `GET /api/videos?seriesId=` | Vídeos do usuário (os 100 mais recentes), opcionalmente de uma série |
+| `GET` / `DELETE /api/videos/:id` | Detalhe e exclusão |
+| `DELETE /api/social-connections/:id` | Desconecta uma rede social |
+
+### Regras de créditos
+
+- O saldo é sempre a soma do extrato (`credit_ledger`).
+- Gerar um vídeo cobra 1 crédito na mesma transação, com uma trava por usuário no Postgres: cliques simultâneos nunca deixam o saldo negativo.
+- Um vídeo que falha devolve o crédito uma única vez.
+- Excluir um vídeo que ainda está na fila devolve o crédito; excluir uma série devolve os créditos dos vídeos dela que estavam na fila.
 
 ---
 
@@ -579,11 +607,13 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Configuração do ambiente de testes
 - [x] Banco de dados com Drizzle, migrações versionadas e seed — Passo 1
 - [x] Autenticação real: e-mail/senha, Google, sessão JWT e limites de tentativas — Passo 2
+- [x] API de séries, vídeos e créditos; painel sem dados no navegador — Passo 3
 
 ### Aplicação e processamento
 
-- [ ] Persistência real dos dados do painel
-- [ ] Gerenciamento completo das séries
+- [x] Persistência real dos dados do painel
+- [x] Gerenciamento das séries (criar, pausar, retomar, excluir)
+- [ ] Música de fundo (upload e importação) — Passo 4
 - [ ] Filas e processamento assíncrono — Passo 5
 - [ ] Integração com provedores de roteiro
 - [ ] Geração local de narração

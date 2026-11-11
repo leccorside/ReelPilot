@@ -178,6 +178,8 @@ export function devMe(dataset: DevDataset): MeDto {
         { id: "c2", platform: "tiktok", username: "@aleksandra.wisniewska.k", status: "active" },
         // An expired token must not count as connected.
         { id: "c3", platform: "instagram", username: "@bartholomew.fitzgerald.official", status: "expired" },
+        // A second YouTube channel (the database allows one row per external account, break-ui on Settings).
+        { id: "c4", platform: "youtube", username: "Histórias da Vovó Shorts", status: "active" },
       ],
     };
   }

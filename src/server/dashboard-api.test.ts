@@ -256,6 +256,9 @@ describe("account", () => {
     await expect(updateAccount(db, userId, { timezone: "Nowhere/City" })).rejects.toBeInstanceOf(ValidationError);
     await expect(updateAccount(db, userId, { autoPublish: "yes" })).rejects.toBeInstanceOf(ValidationError);
     await expect(updateAccount(db, userId, {})).rejects.toBeInstanceOf(ValidationError);
+    // A readable message, not Zod's "String must contain at most 80 character(s)" (break-ui on Settings #4).
+    await expect(updateAccount(db, userId, { name: "x".repeat(81) })).rejects.toThrow("Your name can have at most 80 characters.");
+    expect((await updateAccount(db, userId, { name: "Ó".repeat(80) })).user.name).toHaveLength(80);
   });
 
   it("lists and disconnects only the user's own social accounts", async () => {

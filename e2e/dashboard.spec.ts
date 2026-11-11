@@ -73,6 +73,10 @@ test("pausing a series is saved on the server; deleting it refunds its queued vi
 });
 
 test("another account never sees someone else's series (same browser)", async ({ browser }) => {
+  // Two sign-ups and several navigations in two contexts: in full runs right after a code change
+  // (dev server recompiling) it went past 60 s at a different line each time, with the right
+  // content arriving just after the timeout. Not a product failure, so more time instead of retries.
+  test.slow();
   const ctxA = await browser.newContext();
   const pageA = await ctxA.newPage();
   await signedInUser(pageA);
@@ -99,7 +103,10 @@ test("preferences are saved on the server", async ({ page }) => {
   await expect(page.getByText("Time zone saved")).toBeVisible();
   const autoPublish = page.getByRole("switch", { name: "Publish automatically" });
   await expect(autoPublish).toHaveAttribute("aria-checked", "true");
+  // Wait for the save itself: reloading right after the click could cancel the PATCH in flight.
+  const saved = page.waitForResponse((r) => r.url().includes("/api/account/") && r.request().method() === "PATCH");
   await autoPublish.click();
+  expect((await saved).ok()).toBe(true);
 
   await page.reload();
   await expect(page.getByLabel("Time zone")).toHaveValue("Europe/Prague");

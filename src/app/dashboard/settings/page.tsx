@@ -9,7 +9,8 @@ import { buttonClass } from "@/components/button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "@/components/icons";
 import { api, ApiError, useMe } from "@/lib/api-client";
 import type { MeDto } from "@/lib/api-types";
-import { PLATFORMS, TIMEZONES } from "@/lib/options";
+import { ACCOUNT_NAME_MAX } from "@/lib/limits";
+import { browserTimezone, PLATFORMS, timezoneOptions } from "@/lib/options";
 
 const ICONS = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: YoutubeIcon } as const;
 const field =
@@ -39,7 +40,8 @@ export default function SettingsPage() {
 
   const user = me.user;
   const shownName = name ?? user.name ?? "";
-  const timezones = TIMEZONES.includes(user.timezone) ? TIMEZONES : [user.timezone, ...TIMEZONES];
+  const timezones = timezoneOptions(user.timezone);
+  const detected = browserTimezone();
 
   /** Saves profile/preference fields; switches update on screen right away and roll back on error. */
   const save = async (prefs: Prefs, done?: string) => {
@@ -112,12 +114,19 @@ export default function SettingsPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-2 text-sm font-medium">
                 <span>Name</span>
-                <input className={field} value={shownName} onChange={(e) => setName(e.target.value)} />
+                <input className={field} dir="auto" maxLength={ACCOUNT_NAME_MAX} value={shownName} onChange={(e) => setName(e.target.value)} />
               </label>
-              <label className="space-y-2 text-sm font-medium">
+              {/* Plain text, not a disabled input: a disabled field can't scroll, so a long address
+                  was never readable in full (#3). */}
+              <div className="space-y-2 text-sm font-medium">
                 <span>Email</span>
-                <input className={field} value={user.email} disabled />
-              </label>
+                <p
+                  data-testid="account-email"
+                  className="flex min-h-10 items-center rounded-md border border-input bg-muted/40 px-3 py-2 font-normal text-muted-foreground [overflow-wrap:anywhere]"
+                >
+                  {user.email}
+                </p>
+              </div>
             </div>
             <button className={buttonClass("primary")} disabled={name === null || !shownName.trim() || saving}>
               Save changes
@@ -127,37 +136,46 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader title="Connected accounts" description="Where your series post their videos" />
-          <div className="divide-y px-6 pb-2">
-            {PLATFORMS.map((p) => {
+          <ul className="divide-y px-6 pb-2" aria-label="Connected accounts">
+            {PLATFORMS.flatMap((p) => {
               const Icon = ICONS[p.id as keyof typeof ICONS];
-              const conn = me.connections.find((c) => c.platform === p.id);
-              return (
-                <div key={p.id} className="flex items-center justify-between gap-4 py-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+              // One row per account: a platform can have several (two YouTube channels), and each
+              // must be visible and removable on its own (#2).
+              const conns = me.connections.filter((c) => c.platform === p.id);
+              return (conns.length ? conns : [null]).map((conn) => (
+                // Stacked on phones: side by side, the badge and button left 0px for the account name (#1).
+                <li key={conn?.id ?? p.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                       <Icon className="h-5 w-5" />
                     </span>
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{p.name}</p>
-                      <p className="truncate text-xs text-muted-foreground">{conn?.username ?? "Not connected"}</p>
+                      <p dir="auto" className="truncate text-xs text-muted-foreground" title={conn?.username}>
+                        {conn?.username ?? "Not connected"}
+                      </p>
                     </div>
                   </div>
-                  {conn ? (
-                    <div className="flex items-center gap-2">
-                      <Badge tone={conn.status === "active" ? "green" : "amber"}>{conn.status === "active" ? "Connected" : "Reconnect needed"}</Badge>
-                      <button className={buttonClass("outline", "sm")} onClick={() => setDisconnect(conn)}>
-                        Disconnect
+                  <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+                    {conn ? (
+                      <>
+                        <Badge tone={conn.status === "active" ? "green" : "amber"} className="whitespace-nowrap">
+                          {conn.status === "active" ? "Connected" : "Reconnect needed"}
+                        </Badge>
+                        <button className={buttonClass("outline", "sm")} aria-label={`Disconnect ${p.name} ${conn.username}`} onClick={() => setDisconnect(conn)}>
+                          Disconnect
+                        </button>
+                      </>
+                    ) : (
+                      <button className={buttonClass("outline", "sm")} aria-label={`Connect ${p.name}`} onClick={() => setConnecting(p.id)}>
+                        Connect
                       </button>
-                    </div>
-                  ) : (
-                    <button className={buttonClass("outline", "sm")} onClick={() => setConnecting(p.id)}>
-                      Connect
-                    </button>
-                  )}
-                </div>
-              );
+                    )}
+                  </div>
+                </li>
+              ));
             })}
-          </div>
+          </ul>
         </Card>
 
         <Card>
@@ -177,14 +195,25 @@ export default function SettingsPage() {
               </div>
               <Switch label="Email notifications" checked={user.emailNotifications} onChange={(v) => void save({ emailNotifications: v })} />
             </div>
-            <div className="flex items-center justify-between gap-4 py-4">
-              <div>
+            {/* Stacked on phones so the zone name fits; any IANA zone can be chosen (#8, #9). */}
+            <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <p className="text-sm font-medium">Time zone</p>
                 <p className="text-xs text-muted-foreground">Used for posting times of new series</p>
+                {detected && detected !== user.timezone && (
+                  <button
+                    type="button"
+                    className="mt-1 text-left text-xs font-medium text-primary underline [overflow-wrap:anywhere]"
+                    onClick={() => void save({ timezone: detected }, "Time zone saved")}
+                  >
+                    Use this device&apos;s time zone ({detected})
+                  </button>
+                )}
               </div>
               <select
                 aria-label="Time zone"
-                className={`${field} w-48`}
+                title={user.timezone}
+                className={`${field} sm:w-64 sm:shrink-0`}
                 value={user.timezone}
                 onChange={(e) => void save({ timezone: e.target.value }, "Time zone saved")}
               >
@@ -205,7 +234,7 @@ export default function SettingsPage() {
             <button className={buttonClass("outline")} onClick={() => setEverywhere(true)}>
               Sign out of all devices
             </button>
-            <button className={buttonClass("primary", "default", "bg-destructive hover:bg-destructive/90")} onClick={() => setDel(true)}>
+            <button className={buttonClass("destructive")} onClick={() => setDel(true)}>
               Delete account
             </button>
           </div>

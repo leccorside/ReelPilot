@@ -307,6 +307,50 @@ test.describe("series detail with worst-case data", () => {
   });
 });
 
+test.describe("settings with worst-case data", () => {
+  test("phone: every account is listed and readable, with its actions in view (#1–#3, #5–#8)", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 320, height: 900 }, timezoneId: "Europe/Lisbon" });
+    const page = await ctx.newPage();
+    await signedInUser(page);
+    await page.goto("/dashboard/settings/?data=worst");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+
+    // Both YouTube channels, each with its own Disconnect.
+    const accounts = page.getByRole("list", { name: "Connected accounts" }).getByRole("listitem");
+    await expect(accounts).toHaveCount(4);
+    for (const name of ["@aleksandra.wisniewska.k", "@bartholomew.fitzgerald.official", "Histórias da Vovó Shorts"]) {
+      const handle = page.getByTitle(name, { exact: true });
+      expect((await handle.boundingBox())!.width).toBeGreaterThan(100); // was 0px at 320
+      const disconnect = page.getByRole("button", { name: new RegExp(`^Disconnect .* ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+      expect((await disconnect.boundingBox())!.x + (await disconnect.boundingBox())!.width).toBeLessThanOrEqual(320); // inside the page width
+    }
+    const badge = page.getByText("Reconnect needed");
+    expect((await badge.boundingBox())!.height).toBeLessThan(30); // one line
+
+    // The full email is on screen, not cut inside a disabled field.
+    await expect(page.getByTestId("account-email")).toHaveText("bartholomew.fitzgerald@northwind-industries-holdings.example.com");
+    expect((await page.getByTestId("account-email").boundingBox())!.width).toBeLessThanOrEqual(320);
+
+    // The zone name fits, any zone can be chosen, and this device's zone is offered.
+    const tz = page.getByLabel("Time zone");
+    expect((await tz.boundingBox())!.width).toBeGreaterThan(230);
+    expect(await tz.locator("option").count()).toBeGreaterThan(300);
+    await expect(page.getByRole("button", { name: "Use this device's time zone (Europe/Lisbon)" })).toBeVisible();
+    await ctx.close();
+  });
+
+  test("the name is limited like the API, and Delete looks destructive (#4, #10)", async ({ page }) => {
+    await signedInUser(page);
+    await page.goto("/dashboard/settings/");
+    await expect(page.getByRole("textbox").first()).toHaveAttribute("maxlength", "80");
+    const color = await page.getByRole("button", { name: "Delete account" }).evaluate((b) => getComputedStyle(b).backgroundColor);
+    const save = await page.getByRole("button", { name: "Save changes" }).evaluate((b) => getComputedStyle(b).backgroundColor);
+    expect(color).not.toBe(save);
+    expect(color).toMatch(/^rgb\((\d+)/);
+    expect(Number(color.match(/^rgb\((\d+)/)![1])).toBeGreaterThan(180); // red channel
+  });
+});
+
 test("the plan's series limit: the API refuses and the wizard says so up front (#6)", async ({ page }) => {
   await signedInUser(page);
   await createSeriesViaApi(page);

@@ -489,7 +489,7 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | Método e rota | O que faz |
 |---|---|
 | `GET /api/me` | Perfil, preferências, plano, saldo de créditos e contas sociais conectadas |
-| `PATCH /api/account` | Atualiza nome, fuso, notificações por e-mail e publicação automática |
+| `PATCH /api/account` | Atualiza nome (até 80 caracteres), fuso (qualquer fuso IANA), notificações por e-mail e publicação automática |
 | `GET /api/series` | Séries do usuário, com total de vídeos e de publicados |
 | `POST /api/series` | Cria uma série com os campos do assistente (`403` quando o plano já tem o máximo de séries) |
 | `GET` / `PATCH` / `DELETE /api/series/:id` | Detalhe, edição (inclusive pausar e retomar) e exclusão |

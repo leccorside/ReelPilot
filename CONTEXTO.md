@@ -314,6 +314,31 @@
     - **Erro durante a correção:** a classe `block` anulava o `display` do `line-clamp-4`, e o nicho não era cortado. O teste E2E pegou (360 px de altura); o `block` agora só entra quando o texto está aberto.
     - **Testes:** `src/lib/series-status.test.ts` (5) e 3 testes E2E novos em `e2e/break-ui.spec.ts`; `music.spec.ts` passou a esperar "1 track". Resultado: typecheck ✅, lint ✅, Vitest 86/86 ✅, Playwright 46/46 ✅ duas vezes seguidas.
 
+24. **break-ui nas configurações (2026-11-11), com correções (`fix all`):**
+    - **Ferramenta:** o `devMe("worst")` ganhou um segundo canal do YouTube (o índice `social_connections_account_uq` permite uma linha por conta externa).
+    - **Achados:**
+      - em 320 px, o nome da conta conectada ficava com 0 px (até o "@jo") e o ícone era espremido;
+      - o 2º canal do YouTube não aparecia (`find`) e não podia ser desconectado;
+      - o e-mail longo ficava num campo desativado, que não rola;
+      - o nome sem `maxLength`, e a API devolvia a mensagem crua do Zod;
+      - nome da conta cortado sem `title`;
+      - badge "Reconnect needed" em 2 linhas;
+      - seletor de fuso de 192 px ("America/Arg");
+      - só 8 fusos;
+      - botão "Delete account" roxo como o primário.
+    - **Correções:**
+      - uma linha por conta (`filter`), empilhada abaixo de `sm`, com ícone `shrink-0`, `title` no nome, badge `whitespace-nowrap` e `aria-label` próprio em cada Disconnect;
+      - e-mail como texto com `[overflow-wrap:anywhere]`;
+      - `ACCOUNT_NAME_MAX = 80` em `src/lib/limits.ts`, usado no `maxLength` e na API (`me.ts` e `accounts.ts`), com mensagem própria;
+      - `timezoneOptions()` em `options.ts` (todos os fusos de `Intl.supportedValuesOf`, UTC primeiro, o atual sempre presente), usado também no editor de série; `browserTimezone()` oferece "Use this device's time zone";
+      - seletor de fuso embaixo do rótulo no celular e `w-64` acima disso, com `title`;
+      - variante `destructive` no `buttonClass`: o `bg-destructive` passado como classe extra perdia para o `bg-primary`, o que também deixava roxos os botões de confirmação perigosa (`Confirm danger`).
+    - **Junto:** o editor de série prefere a conexão ativa quando a plataforma tem várias contas, para não dizer "Reconnect needed" por causa de outro canal.
+    - **Testes:** `src/lib/options.test.ts` (1), nome longo no teste de API, 2 testes E2E novos em `e2e/break-ui.spec.ts`. Resultado: typecheck ✅, lint ✅, Vitest 87/87 ✅, Playwright 48/48 ✅ duas vezes seguidas.
+    - **Testes instáveis corrigidos:**
+      - "preferences are saved on the server" recarregava a página antes de o `PATCH` terminar, o que cancelava o salvamento; agora espera a resposta;
+      - "another account never sees…" estourava os 60 s nas baterias logo depois de edições, cada vez numa linha diferente, com o conteúdo certo chegando logo depois do limite; recebeu `test.slow()`.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.
@@ -361,6 +386,7 @@
 
 ## Pendências
 - **Próximo: Passo 5 (fila BullMQ e worker separado)**, aguardando autorização.
+- **Passo 12:** a série escolhe plataformas, não contas. Com dois canais do YouTube conectados, falta decidir em qual publicar (provavelmente escolher o canal na série).
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.

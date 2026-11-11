@@ -143,7 +143,7 @@ export function Confirm({
             Cancel
           </button>
           <button
-            className={buttonClass("primary", "default", danger ? "bg-destructive hover:bg-destructive/90" : "")}
+            className={buttonClass(danger ? "destructive" : "primary")}
             onClick={() => {
               onConfirm();
               onClose();

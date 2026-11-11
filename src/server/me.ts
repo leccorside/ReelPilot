@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { MeDto } from "@/lib/api-types";
+import { ACCOUNT_NAME_MAX } from "@/lib/limits";
 import { FREE_PLAN, planInfo } from "@/lib/plans";
 import type { Db } from "@/server/db";
 import { getCreditBalance } from "@/server/db/credits";
@@ -49,7 +50,7 @@ export async function getMe(db: Db, userId: string): Promise<MeDto> {
 
 export const accountSchema = z
   .object({
-    name: z.string().trim().min(1, "Name can't be empty.").max(80),
+    name: z.string().trim().min(1, "Name can't be empty.").max(ACCOUNT_NAME_MAX, `Your name can have at most ${ACCOUNT_NAME_MAX} characters.`),
     timezone: z.string().refine(isValidTimezone, "Unknown time zone."),
     emailNotifications: z.boolean(),
     autoPublish: z.boolean(),

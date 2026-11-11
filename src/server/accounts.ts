@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type Redis from "ioredis";
 import { z } from "zod";
+import { ACCOUNT_NAME_MAX } from "@/lib/limits";
 import type { Db } from "@/server/db";
 import { SIGNUP_BONUS_CREDITS } from "@/server/db/credits";
 import { creditLedger, users } from "@/server/db/schema";
@@ -29,7 +30,7 @@ export const signupSchema = z.object({
     .string()
     .min(PASSWORD_MIN, `Password must be at least ${PASSWORD_MIN} characters.`)
     .max(PASSWORD_MAX, `Password must be at most ${PASSWORD_MAX} characters.`),
-  name: z.string().trim().max(80).optional(),
+  name: z.string().trim().max(ACCOUNT_NAME_MAX, `Your name can have at most ${ACCOUNT_NAME_MAX} characters.`).optional(),
 });
 
 export type PublicUser = { id: string; name: string | null; email: string; image: string | null };

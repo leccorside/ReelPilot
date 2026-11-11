@@ -61,8 +61,32 @@ export const FREQUENCIES = [
 
 export type FrequencyId = (typeof FREQUENCIES)[number]["id"];
 
-/** Time zones offered in the dashboard (any valid IANA zone is accepted by the API). */
+/** Fallback for browsers without Intl.supportedValuesOf. */
 export const TIMEZONES = ["UTC", "America/New_York", "America/Los_Angeles", "America/Sao_Paulo", "Europe/London", "Europe/Prague", "Asia/Kolkata", "Asia/Tokyo"];
+
+/**
+ * Every IANA time zone the browser knows (about 420; the API accepts any valid one), UTC first and
+ * the current value always present. The short list left people in Lisbon or Sydney without their
+ * zone (break-ui on Settings #9).
+ */
+export function timezoneOptions(current: string): string[] {
+  let all: string[];
+  try {
+    all = Intl.supportedValuesOf("timeZone");
+  } catch {
+    all = TIMEZONES;
+  }
+  return ["UTC", ...[...new Set([...all, current])].filter((z) => z !== "UTC").sort()];
+}
+
+/** The browser's own time zone (null when it can't tell). */
+export function browserTimezone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
 
 /** Name of an option by id (falls back to the id itself). */
 export function optionName(list: readonly { id: string; name: string }[], id: string): string {

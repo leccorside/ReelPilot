@@ -8,7 +8,7 @@ import { buttonClass } from "../button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "../icons";
 import type { MeDto, SocialPlatform } from "@/lib/api-types";
 import { SERIES_NAME_MAX, SERIES_NICHE_MAX } from "@/lib/limits";
-import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, TIMEZONES, VOICES } from "@/lib/options";
+import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, timezoneOptions, VOICES } from "@/lib/options";
 import type { SeriesForm } from "@/lib/series-form";
 
 // The fields of a series, shared by the creation wizard (one block per step) and the edit page
@@ -210,9 +210,11 @@ const PLATFORM_ICON = { tiktok: TiktokIcon, instagram: InstagramIcon, youtube: Y
 
 /** Name, platforms, frequency and time. The time zone selector is shown on the edit page only. */
 export function ScheduleFields({ value, set, me, showTimezone = false }: FieldsProps & { me: MeDto | undefined; showTimezone?: boolean }) {
-  const connection = (platform: string) => me?.connections.find((c) => c.platform === platform);
+  // A platform can have several accounts (two YouTube channels): a working one wins over an expired one.
+  const connection = (platform: string) =>
+    me?.connections.find((c) => c.platform === platform && c.status === "active") ?? me?.connections.find((c) => c.platform === platform);
   const connected = (platform: string) => connection(platform)?.status === "active";
-  const timezones = TIMEZONES.includes(value.timezone) ? TIMEZONES : [value.timezone, ...TIMEZONES];
+  const timezones = timezoneOptions(value.timezone);
   return (
     <>
       <div className="space-y-3">

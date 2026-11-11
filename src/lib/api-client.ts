@@ -1,7 +1,13 @@
 "use client";
 
-import useSWR, { mutate as globalMutate } from "swr";
+import useSWR, { mutate as globalMutate, type SWRResponse } from "swr";
 import { IN_PROGRESS, type MeDto, type MusicTrackDto, type SeriesDto, type VideoDto } from "./api-types";
+import { devMe, devMusic, devSeries, useDevDataset } from "./dev-data";
+
+/** DEVELOPMENT ONLY (break-ui): answers a hook with a fixture instead of the API. */
+function devResponse<T>(real: SWRResponse<T>, data: T): SWRResponse<T> {
+  return { ...real, data, error: undefined, isLoading: false, isValidating: false, mutate: (async () => data) as SWRResponse<T>["mutate"] };
+}
 
 // Browser side of the dashboard API: a fetch wrapper with readable errors and SWR hooks.
 
@@ -46,7 +52,9 @@ export const keys = {
 
 /** The user's music library. Playback links expire after 30 minutes, so the list refreshes every 20. */
 export function useMusic() {
-  return useSWR<MusicTrackDto[]>(keys.music, fetcher, { refreshInterval: 20 * 60 * 1000 });
+  const dev = useDevDataset();
+  const real = useSWR<MusicTrackDto[]>(dev ? null : keys.music, fetcher, { refreshInterval: 20 * 60 * 1000 });
+  return dev ? devResponse(real, devMusic(dev)) : real;
 }
 
 /** Uploads one audio file as the raw request body (the server checks the content). */
@@ -64,7 +72,9 @@ export async function uploadMusicFile(file: File): Promise<MusicTrackDto> {
 }
 
 export function useMe() {
-  return useSWR<MeDto>(keys.me, fetcher);
+  const dev = useDevDataset();
+  const real = useSWR<MeDto>(dev ? null : keys.me, fetcher);
+  return dev ? devResponse(real, devMe(dev)) : real;
 }
 
 export function useSeriesList() {
@@ -72,7 +82,9 @@ export function useSeriesList() {
 }
 
 export function useSeries(id: string | undefined) {
-  return useSWR<SeriesDto>(id ? keys.seriesOne(id) : null, fetcher, { shouldRetryOnError: false });
+  const dev = useDevDataset();
+  const real = useSWR<SeriesDto>(id && !dev ? keys.seriesOne(id) : null, fetcher, { shouldRetryOnError: false });
+  return dev && id ? devResponse(real, devSeries(dev, id)) : real;
 }
 
 /** Videos refresh every 5 seconds while any of them is still being made. */

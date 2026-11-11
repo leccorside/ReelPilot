@@ -7,6 +7,7 @@ import { signOut, useSession } from "next-auth/react";
 import { ChevronRight, ChevronsUpDown, CreditCard, Film, Info, Layers, LogOut, Menu, Settings, X, Zap } from "lucide-react";
 import { Logo } from "../logo";
 import { useMe } from "@/lib/api-client";
+import { DevDataToggle } from "./dev-data-toggle";
 import type { MeDto } from "@/lib/api-types";
 
 type SessionUser = { name?: string | null; email?: string | null };
@@ -165,6 +166,7 @@ export function DashboardShell({ crumbs, actions, children }: { crumbs: Crumb[];
         </div>
         <div className="p-4 md:p-8">{children}</div>
       </main>
+      {process.env.NODE_ENV !== "production" && <DevDataToggle />}
     </div>
   );
 }

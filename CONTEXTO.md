@@ -193,6 +193,19 @@
     - **Testes:** `e2e/edit-series.spec.ts` (3): editar todos os campos (formato, nicho, idioma, voz, upload de música nova e retirada da antiga, arte, legenda, nome, plataforma, frequência, horário e fuso), conferindo pela tela e pela API; salvar desativado com seção incompleta e "Cancel" descartando; série de outra conta.
     - **Resultado:** typecheck ✅, lint ✅, Vitest 70/70 ✅, Playwright 27/27 ✅ em 3 rodadas completas seguidas depois da correção, build de produção ✅.
 
+19. **break-ui na tela de edição (2026-11-11):**
+    - **Ferramenta só de desenvolvimento:** os conjuntos de pior caso estão em `src/lib/dev-data.ts` (worst, empty, one, huge) e entram pelos hooks `useMe`/`useSeries`/`useMusic` com `?data=`. O `src/components/dashboard/dev-data-toggle.tsx` é o seletor no rodapé, que só aparece fora da produção e recarrega a página com o conjunto escolhido.
+    - **Capturas temporárias** em `e2e-shots/` (fora da bateria de testes): 1280, 768 e 320 px e zoom de 200%.
+    - **Relatório entregue à pessoa; correções aguardando a escolha dela.** Principais achados:
+      - em 320 px a página fica com 591 px de largura por causa do nome longo do canal do YouTube em "Post to";
+      - formato e voz selecionados ficam escondidos nas listas roláveis;
+      - nomes de faixa ilegíveis no celular;
+      - dá para marcar mais de 10 faixas;
+      - mensagem do zod "String must contain at most 80 character(s)", porque o campo não tem limite;
+      - conexão expirada aparece como "Not connected";
+      - o erro da importação fica longe do botão e é apagado pelo upload;
+      - o servidor corta a extensão de nomes de arquivo acima de 120 caracteres.
+
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.

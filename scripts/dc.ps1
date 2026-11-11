@@ -11,6 +11,10 @@
     lint         ESLint
     typecheck    checagem de tipos (tsc)
     check        typecheck + lint + test + e2e
+    migrate      aplica as migrações pendentes do banco
+    db-generate <nome>  gera uma migração nova a partir de src/server/db/schema.ts
+    seed         recria a conta de demonstração (creator@example.com) com dados de exemplo
+    psql         abre o terminal SQL do banco de desenvolvimento
     npm <args>   roda o npm dentro do container (ex.: .\scripts\dc.ps1 npm install zod)
     shell        abre um terminal no container web
     prod-build   constrói a imagem de produção
@@ -46,6 +50,13 @@ switch ($Command) {
     Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npm", "test")
     Invoke-Docker @("compose", "--profile", "test", "run", "--rm", "e2e", "npx", "playwright", "test")
   }
+  "migrate"    { Invoke-Docker @("compose", "run", "--rm", "migrate") }
+  "db-generate" {
+    if (-not $Rest) { Write-Host "Informe o nome da migração. Ex.: .\scripts\dc.ps1 db-generate add_video_tags"; exit 1 }
+    Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npx", "drizzle-kit", "generate", "--name", $Rest[0])
+  }
+  "seed"       { Invoke-Docker @("compose", "run", "--rm", "--no-deps", "web", "npx", "tsx", "scripts/seed.ts") }
+  "psql"       { Invoke-Docker @("compose", "exec", "postgres", "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"') }
   "npm"        { Invoke-Docker (@("compose", "run", "--rm", "--no-deps", "web", "npm") + $Rest) }
   "shell"      { Invoke-Docker @("compose", "exec", "web", "sh") }
   "prod-build" { Invoke-Docker ($prod + @("build", "web")) }
@@ -54,5 +65,9 @@ switch ($Command) {
     Invoke-Docker @("compose", "--profile", "test", "down", "-v")
     Invoke-Docker @("compose", "up", "-d", "--build", "--wait")
   }
-  default      { Get-Help $PSCommandPath -Detailed | Out-String | Write-Host; Get-Content $PSCommandPath -TotalCount 20 | Select-Object -Skip 1 | Write-Host }
+  default      {
+    $lines = Get-Content $PSCommandPath -Encoding UTF8
+    $end = [Array]::IndexOf($lines, "#>")
+    $lines[1..($end - 1)] | Write-Host
+  }
 }

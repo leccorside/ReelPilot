@@ -16,6 +16,14 @@ services:
     healthcheck:
       start_period: 30s
 
+  migrate:
+    build:
+      target: runner-migrate
+    image: reelpilot-migrate:${IMAGE_TAG:-local}
+    environment:
+      NODE_ENV: production
+    volumes: !reset []
+
   postgres:
     restart: unless-stopped
   redis:

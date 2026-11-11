@@ -1,7 +1,11 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. O **Passo 0 (fundação) está concluído**.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 (fundação) e 1 (banco de dados) estão concluídos**.
+- **Banco:** PostgreSQL com Drizzle ORM 0.45.4.
+  - O schema fica em `src/server/db/schema.ts` e tem 12 tabelas: `users`, `accounts`, `sessions`, `verification_tokens`, `series`, `music_tracks`, `series_music_tracks`, `videos`, `video_steps`, `credit_ledger`, `subscriptions` e `social_connections`.
+  - As migrações SQL ficam em `drizzle/`. O serviço `migrate` aplica as migrações antes do `web` e encerra.
+  - `.\scripts\dc.ps1 seed` cria a conta de demonstração `creator@example.com` (2 séries, 3 vídeos, saldo de 58 créditos e 1 canal do YouTube).
 - **Roda 100% em Docker** (`docker-compose.yml`). Na máquina só é preciso ter Docker. Serviços:
   - `web` (dev com recarga automática, http://localhost:3100);
   - `postgres` 16.6, `redis` 7.4.1;
@@ -39,7 +43,27 @@
     - dependências novas: `zod`, `postgres`, `ioredis`, `vitest`, `@playwright/test` (versão fixa igual à imagem), `eslint@8` e `eslint-config-next`.
     - **Testes:** typecheck ✅, lint ✅, Vitest 4/4 ✅, Playwright 4/4 ✅, todas as rotas com 200 ✅, recarga automática em cerca de 7 s ✅, imagem de produção saudável ✅, servidor recusa subir com variáveis inválidas ✅.
 
-12. `README.md` criado (2026-11-11): o que é o produto, stack, requisitos (só Docker), primeiros passos, comandos do `scripts/dc.ps1`, serviços do compose, estrutura, variáveis de ambiente e produção. Atualizar o README quando entrarem serviços ou comandos novos.
+12. `README.md` criado (2026-11-11): o que é o produto, stack, requisitos (só Docker), primeiros passos, comandos do `scripts/dc.ps1`, serviços do compose, estrutura, variáveis de ambiente e produção. Atualizar o README quando entrarem serviços ou comandos novos. Depois a pessoa reescreveu o README; o `PASSOS.md` passou a ficar fora do git, e os links para ele foram tirados.
+13. **Passo 1 concluído (2026-11-11):**
+    - **Schema Drizzle:**
+      - enums para status de série, frequência, status do vídeo, etapas, motivo do crédito, plano, status da assinatura, rede social e origem da música;
+      - as tabelas do Auth.js seguem os nomes de propriedade do `@auth/drizzle-adapter`, com colunas em snake_case no banco;
+      - `users.id` é texto (exigência do adaptador); as demais tabelas usam `uuid` com `gen_random_uuid()`.
+    - **Regras garantidas pelo próprio banco:**
+      - e-mail único e sempre em minúsculas;
+      - horário no formato `HH:MM` e pelo menos um formato por série;
+      - música de até 10 MB;
+      - uma linha por etapa de cada vídeo;
+      - no extrato de créditos: valor diferente de zero, sinal coerente com o motivo, no máximo um débito e um estorno por vídeo, e `idempotency_key` única para recargas;
+      - no máximo uma assinatura vigente por usuário;
+      - uma conexão por conta de rede social;
+      - excluir o usuário apaga tudo dele em cascata, enquanto excluir um vídeo mantém o extrato (o `video_id` vira nulo).
+    - **Serviço `migrate`:** `scripts/migrate.mjs`, em JavaScript puro, sem precisar de ferramentas de TypeScript. Na produção usa a imagem `runner-migrate`, só com `drizzle-orm`, `postgres`, o SQL e o script, rodando como usuário 1001.
+    - **Criptografia dos tokens:** `src/server/crypto.ts` (AES-256-GCM, formato `v1:iv:tag:dados`) e a nova variável `ENCRYPTION_KEY` (32 bytes em base64, validada no início).
+    - **Saldo de créditos:** `src/server/db/credits.ts`, com `getCreditBalance` (soma do extrato) e `SIGNUP_BONUS_CREDITS = 60`.
+    - **Testes:** `src/test/global-setup.ts` apaga e recria o banco `reelpilot_test` e roda o `migrate.mjs` nele, provando que as migrações sobem do zero. `src/server/db/schema.test.ts` tem 12 testes (todas as tabelas e regras acima) e `src/server/crypto.test.ts` tem 3.
+    - **Atalhos novos:** `migrate`, `db-generate <nome>`, `seed` e `psql` no `dc.ps1`. O `.vscode/settings.json` registra as tags `!reset`/`!override` do Compose para a extensão YAML.
+    - **Resultado dos testes:** typecheck ✅, lint ✅, Vitest 19/19 ✅, Playwright 4/4 ✅, seed rodado duas vezes sem duplicar ✅, pilha de produção (migrate → web) saudável ✅.
 
 ## Decisões
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
@@ -57,6 +81,7 @@
 - **Tags de imagem inexistentes:** `node:22.12.0-alpine` e `minio/minio` não existem mais. Antes de fixar uma versão, conferir com `docker manifest inspect <imagem>`.
 - **PowerShell 5.1 estraga acentos:** `Get-Content`/`Set-Content` sem codificação leem UTF-8 sem BOM como ANSI. Editar arquivos com a ferramenta de escrita ou com `[IO.File]::ReadAllText/WriteAllText` em UTF-8.
 - **`npm ci` falha com `node_modules` em volume** (apaga o ponto de montagem). O entrypoint de desenvolvimento usa `npm install`.
+- **Aspas em comandos PowerShell → `docker exec sh -c`:** o PowerShell 5.1 quebra as aspas internas (`cut -d" "`, `psql -F " | "`). Para comandos com aspas aninhadas, usar a ferramenta Bash ou um script.
 - **Tipos antigos em `.next/types`** após apagar uma rota quebram o `tsc`. Limpar com `docker compose exec web rm -rf .next/types/<rota>`.
 - **ioredis com falha de conexão** registrava "Unhandled error event". O cliente da checagem de saúde tem um listener de `error`.
 - Do protótipo:
@@ -68,11 +93,12 @@
   - `favicon.ico` → criado em `public/`.
 
 ## Pendências
-- **Próximo: Passo 1 (banco de dados com Drizzle e o serviço `migrate`)**, aguardando autorização.
+- **Próximo: Passo 2 (autenticação real com Auth.js)**, aguardando autorização. Ponto de atenção: o login com e-mail e senha (Credentials) do Auth.js exige sessão JWT. É preciso decidir entre JWT com expiração curta ou criar a sessão no banco manualmente.
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- O painel ainda grava os dados no navegador até o Passo 3. Vídeos são simulados, o pagamento não cobra e a conexão social pede só o @.
+- O banco existe, mas o painel ainda grava os dados no navegador até o Passo 3 (API).
+- Os nomes do assistente (por exemplo "1 video per day") viraram enums no banco (`daily`, `twice_daily`, `three_per_week`, `weekly`); o mapeamento entre os dois entra no Passo 3. Vídeos são simulados, o pagamento não cobra e a conexão social pede só o @.
 - O Kokoro e o ComfyUI ainda não estão no compose (passos 7 e 8). Com a IA rodando, nada mais pode ocupar a VRAM da RTX 3060.
 - Produção ainda sem HTTPS, worker, agendador e backup (Passo 19).

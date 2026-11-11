@@ -22,6 +22,9 @@ const envSchema = z.object({
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive(),
   MAIL_FROM: z.string().min(3),
+  ENCRYPTION_KEY: z
+    .string()
+    .refine((v) => Buffer.from(v, "base64").length === 32, "deve ter 32 bytes em base64 (openssl rand -base64 32)"),
 });
 
 export type Env = z.infer<typeof envSchema>;

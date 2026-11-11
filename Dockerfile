@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage image: deps -> dev (compose, hot reload) / build -> runner-web (production).
+# Multi-stage image: deps -> dev (compose, hot reload) / build -> runner-web (production)
+# and runner-migrate (applies the database migrations, then exits).
 # The video worker stage (runner-worker, Debian + ffmpeg) is added in Passo 5.
 
 ARG NODE_IMAGE=node:24.22.1-alpine3.24
@@ -28,6 +29,19 @@ FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
+
+# --- production migrations: only the script, the SQL files and the two packages it needs ---
+# (drizzle-orm and postgres have no dependencies of their own)
+FROM ${NODE_IMAGE} AS runner-migrate
+WORKDIR /app
+ENV NODE_ENV=production
+RUN addgroup -S -g 1001 app && adduser -S -u 1001 -G app app
+COPY --from=deps /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
+COPY --from=deps /app/node_modules/postgres ./node_modules/postgres
+COPY drizzle ./drizzle
+COPY scripts/migrate.mjs ./scripts/migrate.mjs
+USER app
+CMD ["node", "scripts/migrate.mjs"]
 
 # --- production web server (non-root, standalone output) ---
 FROM ${NODE_IMAGE} AS runner-web

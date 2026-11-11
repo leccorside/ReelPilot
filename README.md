@@ -294,11 +294,22 @@ Instale pacotes diretamente no container:
 
 > ⚠️ **Importante:** não execute instalações de dependências com o npm da máquina host. O `package-lock.json` deve ser gerado dentro do ambiente Linux do container, garantindo consistência entre os ambientes.
 
+### Banco de dados
+
+| Comando | Descrição |
+|---|---|
+| `.\scripts\dc.ps1 migrate` | Aplica as migrações pendentes (o `up` também aplica, pelo serviço `migrate`) |
+| `.\scripts\dc.ps1 db-generate <nome>` | Gera uma migração nova a partir de `src/server/db/schema.ts` |
+| `.\scripts\dc.ps1 seed` | Recria a conta de demonstração `creator@example.com` com séries, vídeos e créditos |
+| `.\scripts\dc.ps1 psql` | Abre o terminal SQL do banco de desenvolvimento |
+
+> Toda mudança no schema vira um arquivo SQL versionado em `drizzle/`. Nunca altere o banco à mão nem edite uma migração já aplicada: gere uma nova.
+
 ### Testes e validação
 
 | Comando | Descrição |
 |---|---|
-| `.\scripts\dc.ps1 test` | Executa os testes com Vitest |
+| `.\scripts\dc.ps1 test` | Executa os testes com Vitest (os testes de banco usam um banco `_test` recriado do zero a cada execução) |
 | `.\scripts\dc.ps1 e2e` | Executa os testes Playwright |
 | `.\scripts\dc.ps1 check` | Executa lint, verificação de tipos e testes |
 
@@ -336,6 +347,7 @@ Todos os componentes atuais são orquestrados pelo Docker Compose.
 | Serviço | Imagem | Responsabilidade |
 |---|---|---|
 | `web` | Dockerfile (`dev`) | Aplicação Next.js |
+| `migrate` | Dockerfile (`dev`; `runner-migrate` em produção) | Aplica as migrações e encerra; o `web` só sobe depois dele |
 | `postgres` | `postgres:16.6-alpine` | Banco de dados relacional |
 | `redis` | `redis:7.4.1-alpine` | Cache e infraestrutura de filas |
 | `s3` | `chrislusf/seaweedfs:4.51` | Armazenamento de arquivos |
@@ -349,7 +361,6 @@ O serviço `e2e` é executado sob demanda com o perfil de testes.
 
 | Serviço | Responsabilidade |
 |---|---|
-| `migrate` | Migrações do banco de dados |
 | `worker` | Processamento de tarefas |
 | `scheduler` | Agendamento de geração e publicação |
 | `kokoro` | Síntese de voz local |
@@ -371,15 +382,27 @@ reelpilot/
 │   ├── components/
 │   ├── lib/
 │   ├── server/
+│   │   ├── db/
+│   │   │   ├── schema.ts
+│   │   │   ├── credits.ts
+│   │   │   └── index.ts
+│   │   ├── crypto.ts
+│   │   └── health.ts
+│   ├── test/
 │   └── instrumentation.ts
+│
+├── drizzle/
 │
 ├── e2e/
 │
 ├── docker/
 │
 ├── scripts/
-│   └── dc.ps1
+│   ├── dc.ps1
+│   ├── migrate.mjs
+│   └── seed.ts
 │
+├── drizzle.config.ts
 ├── .env.example
 ├── Dockerfile
 ├── CONTEXTO.md
@@ -394,10 +417,17 @@ reelpilot/
 | `src/components` | Componentes visuais reutilizáveis |
 | `src/lib` | Utilitários, configurações e store provisório |
 | `src/server` | Lógica exclusiva do servidor |
+| `src/server/db/schema.ts` | Schema do banco (Drizzle): usuários, séries, vídeos, etapas, créditos, assinaturas e redes sociais |
+| `src/server/db/credits.ts` | Saldo de créditos, calculado pela soma do extrato |
+| `src/server/crypto.ts` | Criptografia AES-256-GCM dos tokens das redes sociais |
+| `src/test` | Preparação dos testes (banco `_test` recriado a cada execução) |
 | `src/instrumentation.ts` | Validação inicial das variáveis de ambiente |
+| `drizzle` | Migrações SQL versionadas |
 | `e2e` | Cenários de testes Playwright |
 | `docker` | Configurações e entrypoints |
 | `scripts/dc.ps1` | Automação de comandos Docker |
+| `scripts/migrate.mjs` | Aplica as migrações (usado pelo serviço `migrate`) |
+| `scripts/seed.ts` | Dados de demonstração para desenvolvimento |
 
 A estrutura será ampliada conforme os módulos de geração, processamento e publicação forem implementados.
 
@@ -424,6 +454,7 @@ Caso alguma configuração obrigatória esteja ausente ou inválida, o servidor 
 - Utilizar credenciais diferentes para desenvolvimento e produção.
 - Substituir todas as senhas padrão.
 - Manter o `.env.example` atualizado.
+- Gerar a `ENCRYPTION_KEY` com `openssl rand -base64 32` e guardá-la com cuidado: sem ela, os tokens das redes sociais salvos no banco ficam ilegíveis.
 
 ---
 
@@ -513,6 +544,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Serviços PostgreSQL, Redis e SeaweedFS
 - [x] Monitoramento básico de saúde
 - [x] Configuração do ambiente de testes
+- [x] Banco de dados com Drizzle, migrações versionadas e seed — Passo 1
 
 ### Aplicação e processamento
 

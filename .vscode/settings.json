@@ -1,0 +1,4 @@
+{
+  // Docker Compose override tags (docker-compose.prod.yml), unknown to the YAML extension.
+  "yaml.customTags": ["!reset scalar", "!reset sequence", "!reset mapping", "!override sequence", "!override mapping"]
+}

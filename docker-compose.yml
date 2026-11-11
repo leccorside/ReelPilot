@@ -16,6 +16,7 @@ x-app-env: &app-env
   SMTP_HOST: mailpit
   SMTP_PORT: "1025"
   MAIL_FROM: ${MAIL_FROM:-ReelPilot <no-reply@localhost>}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
 
 services:
   web:
@@ -34,8 +35,8 @@ services:
       - web-node-modules:/app/node_modules
       - web-next:/app/.next
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       s3-init:
@@ -46,6 +47,22 @@ services:
       timeout: 10s
       start_period: 180s
       retries: 5
+
+  # Applies pending migrations (./drizzle) and exits; web (and later worker) start only after it succeeds.
+  migrate:
+    build:
+      context: .
+      target: dev
+    command: ["node", "scripts/migrate.mjs"]
+    environment:
+      <<: *app-env
+    volumes:
+      - .:/app
+      - web-node-modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   postgres:
     image: postgres:16.6-alpine

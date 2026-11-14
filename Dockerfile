@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage image: deps -> dev (compose, hot reload) / build -> runner-web (production)
-# and runner-migrate (applies the database migrations, then exits).
-# The video worker stage (runner-worker, Debian + ffmpeg) is added in Passo 5.
+# Multi-stage image: deps -> dev (compose, hot reload) / build -> runner-web (production),
+# runner-migrate (applies the database migrations, then exits) and runner-worker (video pipeline).
+#
+# The worker uses the same Alpine base as the rest, not Debian: in development it shares the
+# node_modules volume with web, and that volume holds musl binaries (esbuild, argon2) that would
+# not load on a glibc image. Alpine's ffmpeg is a current release with libx264.
 
 ARG NODE_IMAGE=node:24.22.1-alpine3.24
 
@@ -18,6 +21,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 # --- development: the source code comes from the bind mount in docker-compose.yml ---
 FROM base AS dev
 ENV NODE_ENV=development
+# ffmpeg for the worker (and the pipeline tests that run in this container); DejaVu for captions.
+RUN apk add --no-cache ffmpeg font-dejavu
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 EXPOSE 3000
@@ -29,6 +34,26 @@ FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
+
+# --- worker bundle: one file with every dependency (all pure JavaScript), no node_modules needed ---
+FROM base AS build-worker
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build:worker
+
+# --- production video worker (non-root, ffmpeg) ---
+FROM ${NODE_IMAGE} AS runner-worker
+WORKDIR /app
+ENV NODE_ENV=production
+RUN apk add --no-cache ffmpeg font-dejavu \
+ && addgroup -S -g 1001 app && adduser -S -u 1001 -G app app \
+ && mkdir -p /tmp/reelpilot && chown app:app /tmp/reelpilot
+COPY --from=build-worker --chown=app:app /app/dist/worker.mjs ./worker.mjs
+USER app
+# The worker touches /tmp/worker-alive every few seconds while it is connected and healthy.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=4 \
+  CMD find /tmp/worker-alive -mmin -1 | grep -q . || exit 1
+CMD ["node", "worker.mjs"]
 
 # --- production migrations: only the script, the SQL files and the two packages it needs ---
 # (drizzle-orm and postgres have no dependencies of their own)

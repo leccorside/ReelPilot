@@ -1,5 +1,7 @@
 # dependências e builds
 node_modules/
+# worker bundle (npm run build:worker)
+dist/
 .next/
 out/
 *.tsbuildinfo

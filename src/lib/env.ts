@@ -37,6 +37,15 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z
     .string()
     .refine((v) => Buffer.from(v, "base64").length === 32, "deve ter 32 bytes em base64 (openssl rand -base64 32)"),
+  // --- video worker (Passo 5) ---
+  /** Videos one worker container makes at the same time. */
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+  /** Scratch space for a video being made (a Docker volume); each video gets its own folder. */
+  WORKER_TMP_DIR: z.string().min(1).default("/tmp/reelpilot"),
+  /** "fake" until the real providers arrive (script: Passo 6, voice: 7, images: 8). */
+  AI_PROVIDERS: z.enum(["fake"]).default("fake"),
+  /** Pause in each fake step, so progress can be watched in the dashboard (0 in tests). */
+  FAKE_PROVIDER_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(0),
 });
 
 export type Env = z.infer<typeof envSchema>;

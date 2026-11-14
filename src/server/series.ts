@@ -9,7 +9,7 @@ import { NotFoundError, PlanLimitError, ValidationError } from "@/server/errors"
 import { planInfo } from "@/lib/plans";
 import { currentPlan } from "@/server/plan";
 import { ownedTrackIds } from "@/server/music";
-import { refundQueuedVideos } from "@/server/videos";
+import { refundUnfinishedVideos } from "@/server/videos";
 
 // Series of a user. Every query filters by the owner: another user's series is "not found".
 
@@ -177,7 +177,7 @@ export async function updateSeries(db: Db, userId: string, id: string, input: un
 }
 
 /**
- * Deletes a series and its videos. Credits of videos still waiting in the queue are refunded.
+ * Deletes a series and its videos. Credits of videos not finished yet (queued or being made) are refunded.
  * Returns the ids of the deleted videos (their files are removed by the caller after commit).
  */
 export async function deleteSeries(db: Db, userId: string, id: string): Promise<string[]> {
@@ -189,7 +189,7 @@ export async function deleteSeries(db: Db, userId: string, id: string): Promise<
       .where(and(eq(series.id, id), eq(series.userId, userId)))
       .for("update");
     if (!row) throw new NotFoundError("Series not found");
-    await refundQueuedVideos(tx, and(eq(videos.seriesId, id), eq(videos.userId, userId))!);
+    await refundUnfinishedVideos(tx,and(eq(videos.seriesId, id), eq(videos.userId, userId))!);
     const gone = await tx.select({ id: videos.id }).from(videos).where(eq(videos.seriesId, id));
     await tx.delete(series).where(eq(series.id, id));
     return gone.map((v) => v.id);

@@ -7,7 +7,7 @@ import { Scene } from "../art";
 import { buttonClass } from "../button";
 import { Badge, Card, Confirm, fmtDate, Toast } from "./ui";
 import { api, ApiError, hueFor, refreshDashboard, useVideos } from "@/lib/api-client";
-import { IN_PROGRESS, type VideoDto, type VideoStatus } from "@/lib/api-types";
+import { IN_PROGRESS, MAKING_STEPS, type VideoDto, type VideoStatus } from "@/lib/api-types";
 
 const STATUS: Record<VideoStatus, { label: string; tone: "amber" | "blue" | "green" | "red" | "gray" }> = {
   queued: { label: "In queue", tone: "gray" },
@@ -26,6 +26,30 @@ const NOT_YET = {
   publish: "Publishing to your social accounts arrives with automatic posting",
   download: "Available when the video file is ready",
 };
+
+/** "Bedtime stories #3.mp4" without characters file systems refuse. */
+const fileName = (title: string) => `${title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "video"}.mp4`;
+
+/** Step bar while a video is being made: one segment per step of the pipeline. */
+function StepProgress({ status }: { status: VideoStatus }) {
+  const index = MAKING_STEPS.indexOf(status); // -1 while still in the queue
+  const label = index < 0 ? "Waiting in the queue" : `Step ${index + 1} of ${MAKING_STEPS.length}: ${STATUS[status].label}`;
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      title={label}
+      aria-valuemin={0}
+      aria-valuemax={MAKING_STEPS.length}
+      aria-valuenow={Math.max(0, index)}
+      className="absolute inset-x-3 bottom-3 flex gap-1"
+    >
+      {MAKING_STEPS.map((s, i) => (
+        <span key={s} className={`h-1 flex-1 rounded-full ${i < index ? "bg-white" : i === index ? "animate-pulse bg-white/80" : "bg-white/30"}`} />
+      ))}
+    </div>
+  );
+}
 
 export function VideoGrid({ seriesId }: { seriesId?: string }) {
   const { data: videos, error, isLoading, hasMore, isLoadingMore, loadMore } = useVideos(seriesId);
@@ -91,8 +115,8 @@ export function VideoGrid({ seriesId }: { seriesId?: string }) {
         danger
         title="Delete this video?"
         description={
-          remove?.status === "queued"
-            ? "It hasn't been made yet, so its credit comes back."
+          remove && IN_PROGRESS.includes(remove.status) && remove.status !== "publishing"
+            ? "It isn't finished yet: making it stops and its credit comes back."
             : "It will be removed from your library. Videos already posted stay on your social accounts."
         }
         confirmLabel="Delete"
@@ -125,13 +149,20 @@ function VideoCards({ videos, onDelete }: { videos: VideoDto[]; onDelete: (v: Vi
             // Column layout: the actions sit at the bottom of every card, aligned across a row (#8).
             <Card key={v.id} className="flex flex-col overflow-hidden" data-testid="video-card">
               <div className="relative block w-full aspect-[9/16]">
-                {/* Placeholder art until real thumbnails: the video number, short and unique (#6, #9). */}
-                <Scene variant={hueFor(v.id) % 8} word={number ?? undefined} className="absolute inset-0" />
-                {/* Status icons at the bottom, never over the number. */}
-                <span className="absolute inset-x-0 bottom-4 flex justify-center">
+                {v.thumbnailUrl ? (
+                  // The rendered video's first frame.
+                  // eslint-disable-next-line @next/next/no-img-element -- signed, short-lived link: nothing for next/image to optimize
+                  <img src={v.thumbnailUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                ) : (
+                  // Placeholder art until the video is rendered: the video number, short and unique (#6, #9).
+                  <Scene variant={hueFor(v.id) % 8} word={number ?? undefined} className="absolute inset-0" />
+                )}
+                {/* Status icons above the step bar, never over the number. */}
+                <span className="absolute inset-x-0 bottom-7 flex justify-center">
                   {working && <Loader2 className="h-7 w-7 animate-spin text-white drop-shadow" aria-hidden />}
                   {v.status === "failed" && <AlertTriangle className="h-7 w-7 text-white drop-shadow" aria-hidden />}
                 </span>
+                {working && v.status !== "publishing" && <StepProgress status={v.status} />}
                 <Badge tone={st.tone} className="absolute left-2 top-2">
                   {st.label}
                 </Badge>
@@ -167,9 +198,15 @@ function VideoCards({ videos, onDelete }: { videos: VideoDto[]; onDelete: (v: Vi
                   <button className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} disabled title={NOT_YET.publish} aria-label="Publish">
                     <Send className="h-3.5 w-3.5" />
                   </button>
-                  <button className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} disabled title={NOT_YET.download} aria-label="Download">
-                    <Download className="h-3.5 w-3.5" />
-                  </button>
+                  {v.videoUrl ? (
+                    <a href={v.videoUrl} download={fileName(v.title)} className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} title="Download the MP4" aria-label="Download">
+                      <Download className="h-3.5 w-3.5" />
+                    </a>
+                  ) : (
+                    <button className={buttonClass("outline", "icon", "h-8 w-8 shrink-0")} disabled title={NOT_YET.download} aria-label="Download">
+                      <Download className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
                     className={buttonClass("ghost", "icon", "ml-auto h-8 w-8 shrink-0 text-muted-foreground")}
                     aria-label="Delete video"
@@ -183,10 +220,8 @@ function VideoCards({ videos, onDelete }: { videos: VideoDto[]; onDelete: (v: Vi
           );
         })}
       </div>
-      {videos.some((v) => v.status === "queued") && (
-        <p className="mt-4 text-xs text-muted-foreground">
-          Videos in the queue start as soon as the video engine is online. Deleting a video that is still in the queue gives its credit back.
-        </p>
+      {videos.some((v) => IN_PROGRESS.includes(v.status) && v.status !== "publishing") && (
+        <p className="mt-4 text-xs text-muted-foreground">Deleting a video before it is finished gives its credit back.</p>
       )}
     </>
   );

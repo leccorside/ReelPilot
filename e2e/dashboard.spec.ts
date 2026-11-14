@@ -30,11 +30,14 @@ test("the wizard creates a series and queues its first video (1 credit)", async 
   await expect(page.getByRole("heading", { name: "Lighthouses" })).toBeVisible();
   await expect(page.getByText("3 videos per week at 18:00")).toBeVisible();
   await expect(page.getByTestId("video-card")).toHaveCount(1);
-  await expect(page.getByTestId("video-card").first()).toContainText("In queue");
+  // The worker picks it up right away: any step of the making, or already finished.
+  await expect(page.getByTestId("video-card").first()).toContainText(/In queue|Writing script|Recording voice|Creating images|Rendering|Ready/);
   await expect(creditsLeft(page)).toHaveText("59/60");
 });
 
-test("generating and deleting a queued video moves credits both ways", async ({ page }) => {
+// Relies on the worker taking a few seconds per video (FAKE_PROVIDER_DELAY_MS, 2 s per step in
+// development): the video is deleted while still being made.
+test("generating and deleting an unfinished video moves credits both ways", async ({ page }) => {
   await signedInUser(page);
   const id = await createSeriesViaApi(page);
   await page.goto(`/dashboard/series/${id}/`);
@@ -52,7 +55,7 @@ test("generating and deleting a queued video moves credits both ways", async ({ 
   await expect(creditsLeft(page)).toHaveText("60/60");
 });
 
-test("pausing a series is saved on the server; deleting it refunds its queued videos", async ({ page }) => {
+test("pausing a series is saved on the server; deleting it refunds its unfinished videos", async ({ page }) => {
   await signedInUser(page);
   const id = await createSeriesViaApi(page);
   await page.request.post(`/api/series/${id}/videos/`);

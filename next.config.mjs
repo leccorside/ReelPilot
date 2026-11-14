@@ -12,7 +12,9 @@ const nextConfig = {
     // Runs src/instrumentation.ts on server start (validates environment variables).
     instrumentationHook: true,
     // Native module (argon2 password hashing): loaded from node_modules, never bundled.
-    serverComponentsExternalPackages: ["@node-rs/argon2"],
+    // bullmq: loaded from node_modules at run time instead of being bundled (it ships Lua scripts
+    // and native-looking requires that webpack would mangle).
+    serverComponentsExternalPackages: ["@node-rs/argon2", "bullmq"],
   },
 };
 export default nextConfig;

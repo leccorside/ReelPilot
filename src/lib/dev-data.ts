@@ -216,6 +216,9 @@ const video = (n: number, status: VideoStatus, title: string, seriesName: string
   publishedAt: status === "published" ? at : null,
   publishedUrls: status === "published" ? { youtube: "https://youtube.com/shorts/dQw4w9WgXcQ" } : null,
   hasFile: status === "ready" || status === "published",
+  // Ready videos link to the development fixture, like music does (no real file behind it).
+  videoUrl: status === "ready" || status === "published" ? "/api/media/dev-fixture.mp4" : null,
+  thumbnailUrl: null,
   ...extra,
 });
 

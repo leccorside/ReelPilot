@@ -111,7 +111,7 @@ export type VideoPages = {
 
 /**
  * The user's videos, newest first, in pages of 50 ("Load more" fetches the next one with the cursor
- * of the last video). Everything loaded refreshes every 5 seconds while a video is being made.
+ * of the last video). Everything loaded refreshes every 3 seconds while a video is being made.
  */
 export function useVideos(seriesId?: string): VideoPages {
   const dev = useDevDataset();
@@ -124,8 +124,16 @@ export function useVideos(seriesId?: string): VideoPages {
       return index === 0 || !previous ? base : `${base}&cursor=${encodeURIComponent(videoCursor(previous[previous.length - 1]))}`;
     },
     fetcher,
-    { refreshInterval: (pages) => (pages?.some((page) => page.some((v) => IN_PROGRESS.includes(v.status))) ? 5000 : 0) },
+    { refreshInterval: (pages) => (pages?.some((page) => page.some((v) => IN_PROGRESS.includes(v.status))) ? 3000 : 0) },
   );
+
+  // A video that fails gives its credit back: refresh the balance when the number of failed videos grows.
+  const failedCount = inf.data?.reduce((n, page) => n + page.filter((v) => v.status === "failed").length, 0) ?? 0;
+  const [seenFailed, setSeenFailed] = useState(failedCount);
+  useEffect(() => {
+    if (failedCount > seenFailed) void globalMutate(keys.me);
+    if (failedCount !== seenFailed) setSeenFailed(failedCount);
+  }, [failedCount, seenFailed]);
 
   // refreshDashboard() reaches paged lists through this registry: SWR's global mutate() with a key
   // filter does not revalidate useSWRInfinite caches.

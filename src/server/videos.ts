@@ -1,6 +1,8 @@
-import { and, desc, eq, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { VIDEO_PAGE_SIZE, type VideoDto, videoCursor } from "@/lib/api-types";
+import { env } from "@/lib/env";
+import { signMediaPath } from "@/server/media-url";
 import type { Db, DbOrTx, Tx } from "@/server/db";
 import { getCreditBalance } from "@/server/db/credits";
 import { creditLedger, series, videos } from "@/server/db/schema";
@@ -9,12 +11,16 @@ import { InsufficientCreditsError, NotFoundError } from "@/server/errors";
 // Videos of a user and the credits they cost.
 // - Creating a video costs 1 credit, charged in the same transaction, under a per-user lock, so
 //   simultaneous clicks can never take the balance below zero.
-// - A video that fails is refunded once. A video deleted while still waiting in the queue
-//   (nothing was produced yet) is refunded too.
+// - A video that fails is refunded once. A video deleted before it was finished (still in the
+//   queue or being made) is refunded too: the customer never got it.
 
 const uuid = z.string().uuid();
 
+/** Statuses of a video that was charged but is not finished yet. */
+export const UNFINISHED: (typeof videos.$inferSelect.status)[] = ["queued", "scripting", "voicing", "imaging", "rendering"];
+
 function toDto(row: typeof videos.$inferSelect & { seriesName: string }): VideoDto {
+  const sign = (key: string | null) => (key ? signMediaPath(env().AUTH_SECRET, key) : null);
   return {
     id: row.id,
     seriesId: row.seriesId,
@@ -27,6 +33,8 @@ function toDto(row: typeof videos.$inferSelect & { seriesName: string }): VideoD
     publishedAt: row.publishedAt?.toISOString() ?? null,
     publishedUrls: row.publishedUrls ?? null,
     hasFile: Boolean(row.videoKey),
+    videoUrl: sign(row.videoKey),
+    thumbnailUrl: sign(row.thumbnailKey),
   };
 }
 
@@ -107,19 +115,19 @@ export async function createVideo(db: Db, userId: string, seriesId: string): Pro
     await tx.insert(creditLedger).values({ userId, delta: -1, reason: "video_debit", videoId: video.id });
     return video.id;
   });
-  // The worker picks queued videos up from Passo 5 on.
+  // The caller adds it to the worker's queue (src/server/video-queue.ts) after this commit.
   return getVideo(db, userId, id);
 }
 
-/** Gives back the credit of every charged, not yet refunded video matching `where` that is still queued. */
-export async function refundQueuedVideos(tx: Tx, where: SQL): Promise<number> {
+/** Gives back the credit of every charged, not yet refunded video matching `where` that isn't finished. */
+export async function refundUnfinishedVideos(tx: Tx, where: SQL): Promise<number> {
   const queued = await tx
     .select({ id: videos.id, userId: videos.userId })
     .from(videos)
     .where(
       and(
         where,
-        eq(videos.status, "queued"),
+        inArray(videos.status, UNFINISHED),
         // Only videos that were actually charged.
         sql`exists (select 1 from ${creditLedger} l where l.video_id = ${videos.id} and l.reason = 'video_debit')`,
       ),
@@ -127,14 +135,14 @@ export async function refundQueuedVideos(tx: Tx, where: SQL): Promise<number> {
   if (queued.length === 0) return 0;
   const refunded = await tx
     .insert(creditLedger)
-    .values(queued.map((v) => ({ userId: v.userId, delta: 1, reason: "video_refund" as const, videoId: v.id, note: "cancelled before generation" })))
+    .values(queued.map((v) => ({ userId: v.userId, delta: 1, reason: "video_refund" as const, videoId: v.id, note: "cancelled before it was finished" })))
     .onConflictDoNothing()
     .returning({ id: creditLedger.id });
   return refunded.length;
 }
 
 /**
- * Marks a video as failed and refunds its credit (at most once). Used by the worker (Passo 5).
+ * Marks a video as failed and refunds its credit (at most once). Used by the worker.
  * Returns false when the video was already failed or published.
  */
 export async function failVideo(db: DbOrTx, videoId: string, error: string): Promise<boolean> {
@@ -161,7 +169,7 @@ export async function failVideo(db: DbOrTx, videoId: string, error: string): Pro
   return (db as Db).transaction(run);
 }
 
-/** Deletes a video. If it was still waiting in the queue, its credit comes back. */
+/** Deletes a video. If it wasn't finished yet, its credit comes back (the worker stops on its own). */
 export async function deleteVideo(db: Db, userId: string, id: string): Promise<{ refunded: boolean }> {
   if (!uuid.safeParse(id).success) throw new NotFoundError("Video not found");
   return db.transaction(async (tx) => {
@@ -172,7 +180,7 @@ export async function deleteVideo(db: Db, userId: string, id: string): Promise<{
       .where(and(eq(videos.id, id), eq(videos.userId, userId)))
       .for("update");
     if (!row) throw new NotFoundError("Video not found");
-    const refunded = await refundQueuedVideos(tx, eq(videos.id, id));
+    const refunded = await refundUnfinishedVideos(tx, eq(videos.id, id));
     await tx.delete(videos).where(eq(videos.id, id));
     return { refunded: refunded > 0 };
   });

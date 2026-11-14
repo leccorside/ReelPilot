@@ -19,6 +19,19 @@ services:
     healthcheck:
       start_period: 30s
 
+  worker:
+    build:
+      target: runner-worker
+    image: reelpilot-worker:${IMAGE_TAG:-local}
+    command: !reset null
+    environment:
+      NODE_ENV: production
+      CHOKIDAR_USEPOLLING: !reset null
+      FAKE_PROVIDER_DELAY_MS: "0"
+    volumes: !reset
+      - worker-tmp:/tmp/reelpilot
+    restart: unless-stopped
+
   migrate:
     build:
       target: runner-migrate

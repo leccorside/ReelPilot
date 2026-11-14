@@ -19,6 +19,9 @@ export type VideoStatus =
 /** Statuses in which the video is still being made. */
 export const IN_PROGRESS: readonly VideoStatus[] = ["queued", "scripting", "voicing", "imaging", "rendering", "publishing"];
 
+/** The making of a video, step by step (the worker's pipeline, in order). */
+export const MAKING_STEPS: readonly VideoStatus[] = ["scripting", "voicing", "imaging", "rendering"];
+
 export type SeriesDto = {
   id: string;
   name: string;
@@ -69,8 +72,11 @@ export type VideoDto = {
   createdAt: string;
   publishedAt: string | null;
   publishedUrls: Partial<Record<SocialPlatform, string>> | null;
-  /** True when the rendered MP4 exists (from Passo 9 on). */
+  /** True when the rendered MP4 exists. */
   hasFile: boolean;
+  /** Signed, short-lived links (/api/media/...) to the MP4 and its thumbnail, once rendered. */
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
 };
 
 export type MeDto = {

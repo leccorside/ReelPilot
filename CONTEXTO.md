@@ -1,7 +1,8 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 4 estão concluídos**: fundação, banco, autenticação, API do painel e armazenamento de arquivos.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 5 estão concluídos**: fundação, banco, autenticação, API do painel, armazenamento de arquivos e fila de geração com worker.
+- **Geração de vídeos (Passo 5):** "Generate video" coloca o vídeo na fila BullMQ `video-generation`, e o serviço `worker` executa roteiro → narração → imagens → montagem, com etapas retomáveis, 3 tentativas e estorno na falha definitiva. Por enquanto com provedores falsos (roteiro fixo, silêncio, imagens de cor sólida) e ffmpeg real: sai um MP4 1080×1920 com miniatura, que aparece no painel e pode ser baixado.
 - **Arquivos:**
   - bucket S3 privado (SeaweedFS), acessado só pelo app;
   - a música de fundo é enviada ou importada por link na etapa 3 do assistente, conferida pelos bytes e tocada por links assinados `/api/media/...`;
@@ -9,7 +10,7 @@
 - **Painel 100% na API** (sem `localStorage`):
   - séries, vídeos, créditos, plano, preferências e contas sociais vêm do banco, por `src/lib/api-client.ts` (SWR);
   - as regras ficam em `src/server/series.ts`, `videos.ts` e `me.ts`;
-  - os vídeos gerados ficam **"In queue"** até o worker existir (Passo 5).
+  - os vídeos passam pelas etapas com barra de progresso (atualização a cada 3 s) e, prontos, mostram a miniatura e o botão Download.
 - **Login real** (Auth.js `next-auth@5.0.0-beta.32`, versão fixada por ser beta):
   - e-mail/senha com argon2id e Google, este último ativo só com `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET`;
   - sessão JWT de 2 h, conferida no banco a cada minuto;
@@ -21,17 +22,17 @@
   - `.\scripts\dc.ps1 seed` cria a conta de demonstração `creator@example.com` (2 séries, 3 vídeos, saldo de 58 créditos e 1 canal do YouTube).
 - **Roda 100% em Docker** (`docker-compose.yml`). Na máquina só é preciso ter Docker. Serviços:
   - `web` (dev com recarga automática, http://localhost:3100);
+  - `worker` (pipeline de vídeo; `tsx watch` no desenvolvimento, limite de 2 CPUs e 2 GB, escala com `--scale worker=N`, pasta temporária no volume `worker-tmp`);
   - `postgres` 16.6, `redis` 7.4.1;
   - `s3` (SeaweedFS 4.51, API S3) + `s3-init` (cria o bucket `reelpilot-media`);
   - `mailpit` (http://localhost:8125);
   - `e2e` (Playwright 1.64.1, só com `--profile test`).
 - Atalhos em `scripts/dc.ps1`: `up`, `down`, `logs`, `ps`, `test`, `e2e`, `lint`, `typecheck`, `check`, `npm <args>`, `shell`, `prod-build`, `prod-up`, `reset`. Pacotes são instalados **dentro do container** (`.\scripts\dc.ps1 npm install x`).
-- Produção: `docker-compose.prod.yml` troca o `web` pela imagem `runner-web` (277 MB, usuário 1001, sem bind mount). Caddy, worker e backups entram nos próximos passos.
+- Produção: `docker-compose.prod.yml` troca o `web` pela imagem `runner-web` (277 MB, usuário 1001, sem bind mount) e o `worker` pela `runner-worker` (449 MB: Alpine + ffmpeg 8.1 + o worker num único `worker.mjs` de 4 MB empacotado pelo esbuild). Caddy e backups entram nos próximos passos.
 - `GET /api/health/` confere o banco, o Redis e o S3 (200 ou 503). É o healthcheck do container `web`.
 - As variáveis de ambiente são validadas com zod (`src/lib/env.ts`) na inicialização (`src/instrumentation.ts`). Se faltar alguma, o servidor não sobe e lista os problemas. Segredos só no `.env` (fora do git); o modelo está no `.env.example`.
 - Páginas públicas: `/`, `/login`, `/contact`, `/privacy`, `/tos`, `/refund`, `/cancellation-policy`, `/affiliate-tos`.
 - Painel: `/dashboard` (redireciona no servidor para séries), `/dashboard/series`, `/dashboard/series/[id]/`, `/dashboard/series/[id]/edit/` (edição de todos os campos), `/dashboard/create` (assistente de 6 etapas), `/dashboard/videos`, `/dashboard/settings`, `/dashboard/billing`.
-- O painel **ainda** usa os dados simulados no navegador (`src/lib/store.ts`, localStorage). A troca pela API real é o Passo 3.
 - Repositório git em `app/` (branch `main`), ainda **sem commits**: o primeiro commit é da pessoa. Os registros da ferramenta de captura (`capture/`, `checks/`, `agent-session.jsonl`...) ficam na pasta-mãe, fora do repositório.
 - Tema: primária `hsl(265 89% 50%)` (#6d0ef1), texto #09090b, cinza #736a81, borda #e5e3e8, `--radius: 0.75rem`, Inter (corpo) e DM Sans (títulos), container 1400px.
 
@@ -339,7 +340,51 @@
       - "preferences are saved on the server" recarregava a página antes de o `PATCH` terminar, o que cancelava o salvamento; agora espera a resposta;
       - "another account never sees…" estourava os 60 s nas baterias logo depois de edições, cada vez numa linha diferente, com o conteúdo certo chegando logo depois do limite; recebeu `test.slow()`.
 
+25. **Passo 5 — Fila e worker (2026-11-14):**
+    - **Fila:** BullMQ 6.7.6, fila `video-generation` (`src/server/video-queue.ts`), compartilhada pela web e pelo worker.
+      - O id do vídeo é o id do job: enfileirar duas vezes não gera dois vídeos.
+      - 3 tentativas com espera exponencial (10 s, 20 s); jobs concluídos são apagados, e os falhos ficam 7 dias.
+      - A web enfileira depois do commit (`POST /api/series/:id/videos`), com limite de 3 s (`enqueueVideoWithin`): com o Redis fora, o pedido não trava e o vídeo fica `queued` até a varredura de recuperação.
+      - `DELETE /api/videos/:id` tira o job da fila se ainda não começou (no máximo 2 s); um vídeo em produção percebe sozinho que foi apagado.
+    - **Pipeline** (`src/worker/pipeline.ts`): roteiro → narração → imagens → montagem.
+      - Cada etapa muda o status do vídeo (`scripting`/`voicing`/`imaging`/`rendering`), registra a tentativa em `video_steps` (`attempts`, `started_at`, `duration_ms`) e grava o resultado (`output`, com chaves do S3, tempos das palavras e duração das cenas) antes da próxima.
+      - Uma etapa com `succeeded` nunca é refeita: retomar continua da etapa interrompida.
+      - Arquivos em `users/<u>/videos/<v>/`: `voice.wav`, `images/scene-N.png`, `video.mp4` e `thumbnail.jpg`.
+      - Vídeo apagado no meio (`VideoGone`): o worker para, apaga o que enviou depois da exclusão e encerra sem erro.
+      - Mensagem de falha legível: `Recording the voice failed: <motivo> (tried 3 times)`; a queda repetida do worker vira "The video engine stopped several times…".
+    - **Worker** (`src/worker/worker.ts` e `index.ts`):
+      - `lockDuration` de 60 s e `maxStalledCount: 2`;
+      - a falha definitiva é decidida pelo estado do job (`getState() === "failed"`), e não pelo número da tentativa, o que cobre também o "travou demais";
+      - varredura de recuperação a cada minuto (`recoverVideos`): vídeo inacabado sem job volta para a fila; vídeo com job falho sem registro vira `failed` com estorno;
+      - pasta temporária por container (`/tmp/reelpilot/<hostname>`), limpa ao iniciar, com subpasta por vídeo apagada no fim;
+      - sinal de vida em `/tmp/worker-alive` a cada 5 s (healthcheck); no `SIGTERM`, espera até 25 s pelos vídeos em andamento (o `stop_grace_period` é de 30 s).
+    - **Provedores** (`src/worker/providers/`): interfaces `ScriptProvider`, `TtsProvider` e `ImageProvider`, com versões falsas: roteiro fixo de 4 cenas a partir do nicho, WAV de silêncio com 380 ms por palavra e tempos de cada palavra, imagens PNG 768×1344 de cor sólida (geradas pelo ffmpeg). `AI_PROVIDERS=fake` e `FAKE_PROVIDER_DELAY_MS` (2 s no desenvolvimento, 0 em produção e nos testes).
+    - **Montagem** (`src/worker/render.ts`): ffmpeg real com cada imagem pela duração da narração da sua cena, escala e corte para 1080×1920, 30 fps, H.264 veryfast/stillimage + AAC, `faststart` e miniatura JPEG de 540×960, conferida com ffprobe.
+    - **Painel:**
+      - barra de 4 segmentos ("Step 2 of 4: Recording voice", `role="progressbar"`) enquanto o vídeo é feito, com atualização a cada 3 s;
+      - miniatura real no lugar da arte provisória;
+      - Download ativo (`videoUrl` assinado, nome `<título>.mp4`);
+      - o saldo se atualiza quando um vídeo falha (estorno).
+      - `VideoDto` ganhou `videoUrl` e `thumbnailUrl`.
+    - **Regra de crédito alterada:** excluir um vídeo **não terminado** (na fila ou em produção) devolve o crédito; antes, só na fila. Com o worker, a fila dura segundos, e cancelar no meio sem estorno cobraria por um vídeo que não existe. O mesmo vale para excluir a série (`refundUnfinishedVideos`).
+    - **Docker:**
+      - estágios `build-worker` (esbuild: `npm run build:worker` → `dist/worker.mjs`) e `runner-worker`;
+      - ffmpeg e `font-dejavu` também no estágio `dev`, para o worker e para os testes do pipeline no container `web`;
+      - serviço `worker` no compose (limite de 2 CPUs e 2 GB, volume `worker-tmp`, sem porta nem nome fixo, para escalar);
+      - o `e2e` espera o worker saudável;
+      - BullMQ marcado como pacote externo no Next (`serverComponentsExternalPackages`), conferido na imagem de produção.
+    - **Testes:**
+      - `src/worker/pipeline.test.ts` (7): MP4 real 1080×1920 h264/aac com duração igual à narração e miniatura; retomada sem refazer etapas nem cobrar; vídeo apagado no meio sem arquivos sobrando; vídeos já finalizados ignorados; mensagens; divisão de threads.
+      - `src/worker/queue.test.ts` (3, BullMQ de verdade no Redis db 3): falha definitiva depois de 3 tentativas com estorno; **worker num processo filho morto com `SIGKILL` na etapa de imagens**, com o seguinte retomando (roteiro e voz com 1 tentativa, imagens com 2, um débito só); recuperação.
+      - E2E `e2e/worker.spec.ts`: "Generate video" → barra de etapas → "Ready" → miniatura → Download devolve `video/mp4` com `ftyp`, 59/60 créditos.
+      - Resultado: typecheck ✅, lint ✅, Vitest 97/97 ✅, Playwright 49/49 ✅ duas vezes.
+    - **Prova manual do critério do passo:** vídeo criado pela API na conta de demonstração, `docker compose kill worker` na etapa de imagens e `up` de novo. O vídeo ficou pronto (15,6 s), com roteiro e voz em 1 tentativa, imagens em 2 e o extrato com um único `video_debit`. A imagem de produção do worker também gerou um vídeo no teste E2E.
+    - **Carga real:** a varredura de recuperação encontrou 265 vídeos antigos parados "In queue" no banco de desenvolvimento (das contas de teste E2E, criados antes de existir worker) e os pôs na fila. Com 3 workers (`--scale worker=3`), todos ficaram prontos sem nenhuma etapa falha, inclusive os interrompidos pelos reinícios do `tsx watch`.
+
 ## Decisões
+- **Worker em Alpine, não em Debian** (mudança em relação ao plano): no desenvolvimento, o worker usa o mesmo volume `node_modules` da web, compilado para musl (esbuild, argon2), que não carregaria numa imagem glibc. O ffmpeg do Alpine é atual (8.1, com libx264). Na produção, o worker é um único arquivo empacotado e não precisa de `node_modules`.
+- **Threads do ffmpeg divididas pela cota de CPU** (`ffmpegThreads`, lendo `/sys/fs/cgroup/cpu.max`): dentro do container, o ffmpeg enxerga os 8 núcleos da máquina e abre cerca de 12 threads por vídeo. Com vários vídeos numa cota de 2 CPUs, o Linux estrangulava tudo (montagem de 30 a 130 s, contra 1 a 2 s sozinha) e a memória encostava nos 2 GB.
+- **Concorrência padrão de 2 vídeos por container**; para mais vazão, mais containers (`--scale worker=N`), e não mais vídeos por container: com 4 por container, a montagem ficou 3 vezes mais lenta.
 - **Arquitetura** (detalhe no `PASSOS.md`): Next.js em modo servidor + PostgreSQL/Drizzle + Auth.js + Redis/BullMQ com worker separado + S3 (SeaweedFS) + Claude API para roteiro + Kokoro e ComfyUI/FLUX locais atrás de interfaces (com versões falsas para testes) + ffmpeg para montar o vídeo + Stripe.
 - **100% Docker:** testes e comandos sempre dentro dos containers. Na máquina e na VPS, só Docker.
 - **SeaweedFS no lugar do MinIO:** a imagem `minio/minio` não existe mais no Docker Hub, porque a MinIO parou de distribuir a versão comunitária. O SeaweedFS (Apache 2.0) roda num único container. O app só usa a API S3, então trocar por R2/S3 é só mudar variáveis.
@@ -351,7 +396,7 @@
 - **Upload pelo app e links assinados pelo app, em vez de URLs pré-assinadas do S3** (mudança em relação ao plano original do Passo 4). O bucket nunca fica exposto (sem porta nem CORS), o conteúdo é validado antes de gravar e tudo funciona igual no desenvolvimento e na produção. O custo é a banda passando pelo app, aceitável para músicas de até 10 MB. Para os MP4 finais, reavaliar no Passo 10.
 - **Importação só de links diretos para arquivos de áudio.** Páginas do TikTok ou do YouTube não são aceitas.
 - **404, e não 403, para registros de outro usuário** (e para ids malformados): não revela se o registro existe.
-- **Excluir vídeo na fila devolve o crédito; vídeo em produção ou pronto não.** Vídeo que falha é sempre estornado.
+- **Excluir vídeo não terminado (na fila ou em produção) devolve o crédito; vídeo pronto não** (ampliado no Passo 5; antes era só na fila). Vídeo que falha é sempre estornado.
 - **Telas sem simulação:** o que depende de passos futuros (música, publicar, baixar, pagar, conectar redes) aparece desativado ou com aviso honesto, em vez de fingir que funciona.
 - **Barra final das URLs feita pelo middleware** (`skipTrailingSlashRedirect`), só para páginas. A API aceita os dois formatos.
 - Estilos de arte com nome de marca registrada ("Disney", "Ghibli", "Lego") serão renomeados no Passo 8.
@@ -374,6 +419,10 @@
 - **`refreshDashboard()` não atualizava a grade paginada:** o `mutate` global do SWR com filtro de chave não revalida caches do `useSWRInfinite`. Cada `useVideos` montado se registra em `pagedLists` (`src/lib/api-client.ts`), que o `refreshDashboard()` também chama.
 - **Expressão regular estragada por `node -e`:** `/^#\d+$/` foi gravada como `/^#d+$/` (o `\d` perdeu a barra no shell), e o número sumia dos cartões. O teste E2E passava enganado porque conferia o texto do cartão; agora confere o `<bdi>` visível e a palavra da arte. Editar código com a ferramenta de edição, nunca por `node -e`/`sed` com barras invertidas.
 - **E2E instável na bateria completa** (testes diferentes estourando 60 s a cada rodada, todos passando isolados): os workers padrão (metade dos núcleos) sobrecarregavam o único servidor de desenvolvimento. `workers: 4` no `playwright.config.ts` deixou a bateria estável e mais rápida (2,2 min contra 2,9 a 4,1).
+- **`docker compose build` falhava com "failed to execute bake: exit status 1"** (2026-11-14), sem outro detalhe. Causa: a sessão estava em `d:\...` (letra minúscula), o contexto do build virou `d:\PROJETOS\...` e o Dockerfile `D:\PROJETOS\...`, e o buildx bake considera o Dockerfile fora do contexto. Correção: o `dc.ps1` passou a sempre usar a letra da unidade em maiúscula. Diagnóstico: `docker compose build --print` mostra os dois caminhos.
+- **`dc.ps1 prod-build`/`prod-up` montavam `docker -f …` sem o `compose`** ("unknown shorthand flag: 'f'"). Corrigido; o `prod-build` agora constrói web, worker e migrate.
+- **Docker Desktop fechado depois do `wsl --shutdown`** da migração do Ubuntu (2026-11-13): `failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`. Basta abrir o Docker Desktop de novo.
+- **Montagem lenta e memória no limite com vários vídeos por container:** ver a decisão "threads do ffmpeg divididas pela cota de CPU". A primeira tentativa (escalar a imagem uma vez antes de montar) não ajudava: sozinho, o ffmpeg já fazia isso em 1 s; o problema era a disputa de threads.
 - **Aviso de build conhecido e inofensivo:** a `jose` (usada pelo Auth.js) referencia `CompressionStream`, que não existe no runtime Edge. Os tokens não usam compressão.
 - **IP do cliente sem proxy:** o Next mantém um `X-Forwarded-For` enviado pelo cliente (falsificável) e, sem ele, usa o IP do gateway do Docker (igual para todos). O limite por IP só é confiável atrás do Caddy (Passo 19).
 - Do protótipo:
@@ -385,14 +434,16 @@
   - `favicon.ico` → criado em `public/`.
 
 ## Pendências
-- **Próximo: Passo 5 (fila BullMQ e worker separado)**, aguardando autorização.
+- **Próximo: Passo 6 (roteiro com IA pela Claude API)**, aguardando autorização. Precisa de uma `ANTHROPIC_API_KEY` no `.env`.
 - **Passo 12:** a série escolhe plataformas, não contas. Com dois canais do YouTube conectados, falta decidir em qual publicar (provavelmente escolher o canal na série).
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- **Vídeos ficam "In queue" para sempre** até o worker (Passo 5). Não há prévia nem arquivo; Publish e Download ficam desativados.
+- **Os vídeos ainda saem dos provedores falsos:** roteiro fixo, narração em silêncio e imagens de cor sólida. A IA real entra nos passos 6 a 8; zoom/pan, transições, legendas e música, no Passo 9; o player no painel, no Passo 10 (por enquanto, miniatura e Download). Publish continua desativado até o Passo 12.
+- **A etapa de imagens não tem fila própria de concorrência 1 ainda:** com a GPU (Passo 8), as imagens de vários vídeos ao mesmo tempo vão precisar de um limite próprio (uma imagem por vez na RTX 3060).
+- **Uma exclusão no meio de uma etapa pode deixar arquivos dessa etapa:** o worker apaga os arquivos do vídeo removido quando percebe a exclusão, mas um envio que termina depois dessa limpeza fica no bucket. É raro, e a varredura de órfãos (Passos 11/18) cobre.
 - **Arquivos órfãos possíveis:** se o armazenamento falhar ao excluir (vídeo, série, conta ou faixa), os arquivos ficam no bucket (o erro vai para o log). Uma varredura periódica entra com o agendador ou a manutenção (Passos 11/18).
 - **Duração da música não é calculada** (`duration_ms` fica vazio). O ffprobe preenche no Passo 9.
 - A lista de séries não é paginada: o limite por plano a mantém pequena (Pro ilimitado; paginar se algum dia passar de centenas).

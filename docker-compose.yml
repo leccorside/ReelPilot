@@ -1,5 +1,5 @@
 # Development environment: everything runs in containers.
-#   docker compose up -d          -> web (hot reload, http://localhost:3100), postgres, redis, s3 (SeaweedFS), mailpit
+#   docker compose up -d          -> web (hot reload, http://localhost:3100), worker, postgres, redis, s3 (SeaweedFS), mailpit
 #   docker compose --profile test run --rm e2e   -> Playwright end-to-end tests
 # Shortcuts: scripts/dc.ps1 (up, down, logs, test, e2e, lint, typecheck, shell, prod-build...)
 name: reelpilot
@@ -54,7 +54,47 @@ services:
       start_period: 180s
       retries: 5
 
-  # Applies pending migrations (./drizzle) and exits; web (and later worker) start only after it succeeds.
+  # Video pipeline (BullMQ queue "video-generation"). More throughput: docker compose up -d --scale worker=3
+  # (no container_name or ports, so it can be scaled). Restarts on code changes in development.
+  worker:
+    build:
+      context: .
+      target: dev
+    command: ["npx", "tsx", "watch", "--clear-screen=false", "src/worker/index.ts"]
+    environment:
+      <<: *app-env
+      CHOKIDAR_USEPOLLING: "true"
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_TMP_DIR: /tmp/reelpilot
+      AI_PROVIDERS: ${AI_PROVIDERS:-fake}
+      FAKE_PROVIDER_DELAY_MS: ${FAKE_PROVIDER_DELAY_MS:-2000}
+    volumes:
+      - .:/app
+      - web-node-modules:/app/node_modules
+      # Scratch files of the videos being made; each container uses its own subfolder.
+      - worker-tmp:/tmp/reelpilot
+    # A stop waits for the video in progress up to this long; after that it is resumed on restart.
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/worker-alive -mmin -1 | grep -q . || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 4
+
+  # Applies pending migrations (./drizzle) and exits; web and worker start only after it succeeds.
   migrate:
     build:
       context: .
@@ -154,6 +194,8 @@ services:
     depends_on:
       web:
         condition: service_healthy
+      worker:
+        condition: service_healthy
 
 volumes:
   web-node-modules:
@@ -161,3 +203,4 @@ volumes:
   pg-data:
   redis-data:
   s3-data:
+  worker-tmp:

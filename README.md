@@ -46,7 +46,7 @@ A proposta é permitir que criadores de conteúdo, empreendedores e gestores de 
 - 📊 **Painel centralizado:** gerenciamento de séries, vídeos e configurações.
 - 🐳 **Infraestrutura Docker:** ambiente isolado, reproduzível e preparado para evolução.
 
-> ⚠️ **Estado atual:** o projeto está em desenvolvimento. A fundação técnica (Passo 0) está concluída. Atualmente, o painel utiliza dados simulados no navegador. A geração real de vídeos, as filas de processamento e as integrações de publicação serão implementadas nas próximas etapas.
+> ⚠️ **Estado atual:** o projeto está em desenvolvimento. Painel, contas, créditos, armazenamento e a **fila de geração com worker** já funcionam de verdade: "Generate video" produz um MP4 real, por enquanto com provedores falsos (roteiro fixo, narração em silêncio e imagens de cor sólida). Roteiro com IA, voz, imagens, publicação e cobrança entram nas próximas etapas.
 
 > 📝 **Observação:** ReelPilot é o nome provisório do projeto.
 
@@ -282,7 +282,9 @@ O projeto conta com um script PowerShell que centraliza as operações do Docker
 | `.\scripts\dc.ps1 ps` | Lista serviços e estados |
 | `.\scripts\dc.ps1 logs` | Exibe os logs |
 | `.\scripts\dc.ps1 logs web` | Exibe os logs da aplicação |
+| `.\scripts\dc.ps1 logs worker` | Exibe os logs do worker de vídeo (cada vídeo, tentativa e falha) |
 | `.\scripts\dc.ps1 shell` | Abre um terminal no container web |
+| `docker compose up -d --scale worker=3` | Sobe mais workers para gerar mais vídeos ao mesmo tempo |
 
 ### Dependências
 
@@ -317,7 +319,7 @@ Instale pacotes diretamente no container:
 
 | Comando | Descrição |
 |---|---|
-| `.\scripts\dc.ps1 prod-build` | Constrói a imagem de produção |
+| `.\scripts\dc.ps1 prod-build` | Constrói as imagens de produção (web, worker e migrate) |
 | `.\scripts\dc.ps1 prod-up` | Inicializa o ambiente de produção |
 
 ### Reinicialização completa
@@ -347,9 +349,10 @@ Todos os componentes atuais são orquestrados pelo Docker Compose.
 | Serviço | Imagem | Responsabilidade |
 |---|---|---|
 | `web` | Dockerfile (`dev`) | Aplicação Next.js |
-| `migrate` | Dockerfile (`dev`; `runner-migrate` em produção) | Aplica as migrações e encerra; o `web` só sobe depois dele |
+| `worker` | Dockerfile (`dev` com `tsx watch`; `runner-worker` em produção) | Gera os vídeos da fila `video-generation` (BullMQ), com ffmpeg. Limite de 2 CPUs e 2 GB; escala com `--scale worker=N` |
+| `migrate` | Dockerfile (`dev`; `runner-migrate` em produção) | Aplica as migrações e encerra; `web` e `worker` só sobem depois dele |
 | `postgres` | `postgres:16.6-alpine` | Banco de dados relacional |
-| `redis` | `redis:7.4.1-alpine` | Cache e infraestrutura de filas |
+| `redis` | `redis:7.4.1-alpine` | Sessões, limites de tentativas e a fila de vídeos |
 | `s3` | `chrislusf/seaweedfs:4.51` | Armazenamento de arquivos |
 | `s3-init` | `amazon/aws-cli:2.39.7` | Inicialização do bucket |
 | `mailpit` | `axllent/mailpit:v1.21.8` | Captura de e-mails |
@@ -357,11 +360,20 @@ Todos os componentes atuais são orquestrados pelo Docker Compose.
 
 O serviço `e2e` é executado sob demanda com o perfil de testes.
 
+### Como um vídeo é gerado
+
+1. `POST /api/series/:id/videos` cobra 1 crédito, grava o vídeo como `queued` e o coloca na fila (o id do vídeo é o id do job, então ele nunca entra duas vezes).
+2. O `worker` executa as etapas em ordem: **roteiro → narração → imagens → montagem**. Cada etapa grava o resultado (em `video_steps` e no S3) antes da próxima, e uma etapa concluída nunca é refeita.
+3. Se uma etapa falha, o job é tentado de novo até 3 vezes, com espera crescente (10 s, 20 s). Na última falha, o vídeo fica `failed` com uma mensagem legível e o crédito volta.
+4. Se o worker cair no meio, o BullMQ entrega o vídeo a outro worker (ou ao mesmo, quando religar), que continua da etapa em que parou, sem cobrar de novo.
+5. A cada minuto, o worker confere vídeos esquecidos: os que ficaram fora da fila (Redis fora do ar na criação) voltam para ela, e os que falharam sem registro são marcados como falha e estornados.
+
+A montagem usa ffmpeg de verdade e gera MP4 1080×1920 H.264/AAC mais uma miniatura. Enquanto os provedores de IA não existem (`AI_PROVIDERS=fake`), o roteiro é fixo, a narração é silêncio e as imagens são de cor sólida. `FAKE_PROVIDER_DELAY_MS` (2 s no desenvolvimento) faz cada etapa demorar para o progresso aparecer no painel.
+
 ### Serviços planejados
 
 | Serviço | Responsabilidade |
 |---|---|
-| `worker` | Processamento de tarefas |
 | `scheduler` | Agendamento de geração e publicação |
 | `kokoro` | Síntese de voz local |
 | `comfyui` | Geração de imagens com IA |
@@ -495,7 +507,7 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | `GET` / `PATCH` / `DELETE /api/series/:id` | Detalhe, edição (inclusive pausar e retomar) e exclusão |
 | `POST /api/series/:id/videos` | Coloca um vídeo novo na fila e cobra 1 crédito (`402` sem crédito) |
 | `GET /api/videos?seriesId=&limit=&cursor=` | Vídeos do usuário, do mais novo ao mais antigo, opcionalmente de uma série. Páginas de `limit` vídeos (padrão 50, máximo 200); a próxima página vem com `cursor=<createdAt>_<id>` do último vídeo recebido |
-| `GET` / `DELETE /api/videos/:id` | Detalhe e exclusão |
+| `GET` / `DELETE /api/videos/:id` | Detalhe e exclusão (a exclusão também tira o vídeo da fila; um vídeo em produção para sozinho) |
 | `DELETE /api/social-connections/:id` | Desconecta uma rede social |
 | `GET /api/music` | Biblioteca de música do usuário, com links de reprodução assinados |
 | `POST /api/music` | Envia um MP3 ou WAV (até 10 MB) como corpo da requisição; nome original no cabeçalho `X-File-Name` |
@@ -503,7 +515,7 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | `DELETE /api/music/:id` | Remove a faixa da biblioteca, das séries e do armazenamento |
 | `GET /api/media/<arquivo>?exp=&sig=` | Entrega um arquivo por link assinado (sem login; o link é a permissão), com suporte a `Range` |
 
-Os campos das séries incluem `musicTrackIds` (até 10 faixas da própria biblioteca).
+Os campos das séries incluem `musicTrackIds` (até 10 faixas da própria biblioteca). Os vídeos prontos trazem `videoUrl` e `thumbnailUrl`, links assinados de 30 minutos para o MP4 e a miniatura.
 
 **Séries por plano:** Free e Starter 1, Growth 3, Pro sem limite. O `GET /api/me` informa o limite e o uso em `limits`, e o assistente avisa antes de começar.
 
@@ -519,8 +531,9 @@ Os campos das séries incluem `musicTrackIds` (até 10 faixas da própria biblio
 
 - O saldo é sempre a soma do extrato (`credit_ledger`).
 - Gerar um vídeo cobra 1 crédito na mesma transação, com uma trava por usuário no Postgres: cliques simultâneos nunca deixam o saldo negativo.
-- Um vídeo que falha devolve o crédito uma única vez.
-- Excluir um vídeo que ainda está na fila devolve o crédito; excluir uma série devolve os créditos dos vídeos dela que estavam na fila.
+- Um vídeo que falha (depois de todas as tentativas) devolve o crédito uma única vez.
+- Excluir um vídeo que ainda não ficou pronto (na fila ou em produção) devolve o crédito; excluir uma série devolve os créditos dos vídeos dela que não ficaram prontos.
+- Retomar um vídeo depois de uma queda do worker nunca cobra de novo: a cobrança acontece só na criação.
 
 ---
 
@@ -594,13 +607,15 @@ O projeto utiliza o modo `standalone` do Next.js para construir uma imagem otimi
 .\scripts\dc.ps1 prod-build
 ```
 
-Imagem resultante:
+Imagens resultantes:
 
 ```text
-reelpilot-web:local
+reelpilot-web:local       (Next.js standalone)
+reelpilot-worker:local    (worker em um único arquivo empacotado pelo esbuild, com ffmpeg; ~450 MB)
+reelpilot-migrate:local   (só as migrações)
 ```
 
-A imagem utiliza uma configuração de execução sem privilégios de root.
+As imagens rodam sem privilégios de root.
 
 ### Inicializar a produção
 
@@ -614,7 +629,6 @@ A preparação completa para hospedagem em VPS está prevista para o **Passo 19*
 
 - Configuração de domínio.
 - HTTPS com Caddy.
-- Worker de processamento.
 - Agendador de tarefas.
 - Rotinas de backup.
 - Implantação e operação em VPS.
@@ -644,7 +658,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Persistência real dos dados do painel
 - [x] Gerenciamento das séries (criar, editar todos os campos e a música, pausar, retomar, excluir)
 - [x] Música de fundo (upload e importação) e armazenamento privado — Passo 4
-- [ ] Filas e processamento assíncrono — Passo 5
+- [x] Fila de geração (BullMQ) e worker com etapas retomáveis, gerando MP4 real com provedores falsos — Passo 5
 - [ ] Integração com provedores de roteiro
 - [ ] Geração local de narração
 - [ ] Geração local de imagens

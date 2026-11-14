@@ -4,7 +4,7 @@
 
     up           sobe o ambiente de desenvolvimento (http://localhost:3000, e-mails em http://localhost:8025)
     down         para os containers (os dados ficam nos volumes)
-    logs [svc]   acompanha os logs (de todos ou de um serviço)
+    logs [svc]   acompanha os logs (de todos ou de um serviço, ex.: logs worker)
     ps           lista os serviços e a saúde de cada um
     test         testes unitários e de integração (Vitest)
     e2e          testes de ponta a ponta (Playwright)
@@ -17,7 +17,7 @@
     psql         abre o terminal SQL do banco de desenvolvimento
     npm <args>   roda o npm dentro do container (ex.: .\scripts\dc.ps1 npm install zod)
     shell        abre um terminal no container web
-    prod-build   constrói a imagem de produção
+    prod-build   constrói as imagens de produção (web, worker e migrate)
     prod-up      sobe o ambiente com a imagem de produção
     reset        APAGA os volumes (banco, redis, arquivos) e sobe do zero
 #>
@@ -27,8 +27,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Set-Location (Split-Path $PSScriptRoot -Parent)
-$prod = @("-f", "docker-compose.yml", "-f", "docker-compose.prod.yml")
+# Upper-case drive letter: started from "d:\..." the compose build context became "d:\..." while
+# the Dockerfile path stayed "D:\...", and buildx bake failed ("failed to execute bake: exit status 1").
+$root = Split-Path $PSScriptRoot -Parent
+if ($root -match '^[a-z]:') { $root = $root.Substring(0, 1).ToUpper() + $root.Substring(1) }
+Set-Location $root
+$prod = @("compose", "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml")
 
 function Invoke-Docker([string[]]$DockerArgs) {
   # Docker writes progress ("Container … Running") to stderr. In Windows PowerShell 5.1, with
@@ -75,7 +79,7 @@ switch ($Command) {
   "psql"       { Invoke-Docker @("compose", "exec", "postgres", "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"') }
   "npm"        { Invoke-Docker (@("compose", "run", "--rm", "--no-deps", "web", "npm") + $Rest) }
   "shell"      { Invoke-Docker @("compose", "exec", "web", "sh") }
-  "prod-build" { Invoke-Docker ($prod + @("build", "web")) }
+  "prod-build" { Invoke-Docker ($prod + @("build", "web", "worker", "migrate")) }
   "prod-up"    { Invoke-Docker ($prod + @("up", "-d", "--wait")) }
   "reset"      {
     Invoke-Docker @("compose", "--profile", "test", "down", "-v")

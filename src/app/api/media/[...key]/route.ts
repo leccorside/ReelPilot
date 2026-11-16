@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request, { params }: { params: { key: string[] } }) {
   const key = params.key.join("/"); // Next.js already decodes each segment
-  if (!key.startsWith("users/") || key.split("/").some((p) => p === "" || p === "." || p === "..")) return jsonError(404, "Not found");
+  // Only the user files and the shared voice previews can be linked to.
+  if (!(key.startsWith("users/") || key.startsWith("previews/")) || key.split("/").some((p) => p === "" || p === "." || p === "..")) return jsonError(404, "Not found");
 
   const url = new URL(req.url);
   const check = verifyMediaSignature(env().AUTH_SECRET, key, url.searchParams.get("exp"), url.searchParams.get("sig"));

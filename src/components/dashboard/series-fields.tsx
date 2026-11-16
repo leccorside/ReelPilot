@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Check, Play, Square } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Loader2, Play, Square } from "lucide-react";
 import { Scene } from "../art";
 import { buttonClass } from "../button";
 import { InstagramIcon, TiktokIcon, YoutubeIcon } from "../icons";
+import { api, ApiError } from "@/lib/api-client";
 import type { MeDto, SocialPlatform } from "@/lib/api-types";
+import { SINGLE_VOICE_LANGUAGES } from "@/lib/voices";
 import { SERIES_NAME_MAX, SERIES_NICHE_MAX } from "@/lib/limits";
 import { ART_STYLES, CAPTION_STYLES, FORMATS, FREQUENCIES, type FrequencyId, LANGUAGES, PLATFORMS, timezoneOptions, VOICES } from "@/lib/options";
 import type { SeriesForm } from "@/lib/series-form";
@@ -80,22 +82,38 @@ export function FormatsNicheFields({ value, set }: FieldsProps) {
 }
 
 export function LanguageVoiceFields({ value, set }: FieldsProps) {
+  // The real narrator (Kokoro), in the chosen language: generated once on the server, then cached.
   const [previewing, setPreviewing] = useState<string | null>(null);
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  const [loading, setLoading] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const stop = () => {
+    audio.current?.pause();
+    audio.current = null;
+    setPreviewing(null);
+  };
+  useEffect(() => () => audio.current?.pause(), []);
+  // A preview of the previous language would be misleading.
+  useEffect(stop, [value.language]);
 
-  // Browser voice for now; the real narrator voices arrive with Kokoro (Passo 7).
-  const preview = (id: string) => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    if (previewing === id) return setPreviewing(null);
-    const v = VOICES.find((x) => x.id === id)!;
-    const u = new SpeechSynthesisUtterance(`Hi, I'm ${v.name}. I will narrate your faceless videos.`);
-    u.lang = value.language;
-    u.pitch = v.pitch;
-    u.rate = v.rate;
-    u.onend = () => setPreviewing(null);
-    setPreviewing(id);
-    window.speechSynthesis.speak(u);
+  const preview = async (id: string) => {
+    const wasPlaying = previewing === id;
+    stop();
+    setPreviewError(null);
+    if (wasPlaying) return;
+    setLoading(id);
+    try {
+      const { url } = await api<{ url: string }>(`/api/voices/preview/?voice=${encodeURIComponent(id)}&language=${encodeURIComponent(value.language)}`);
+      const el = new Audio(url);
+      el.onended = () => setPreviewing((p) => (p === id ? null : p));
+      audio.current = el;
+      await el.play();
+      setPreviewing(id);
+    } catch (e) {
+      setPreviewError(e instanceof ApiError ? e.message : "Couldn't play the preview. Please try again.");
+    } finally {
+      setLoading(null);
+    }
   };
 
   return (
@@ -130,12 +148,32 @@ export function LanguageVoiceFields({ value, set }: FieldsProps) {
                   <span className="mt-1 block text-sm text-muted-foreground">{v.desc}</span>
                 </span>
               </button>
-              <button type="button" className={buttonClass("outline", "icon", "h-9 w-9 shrink-0")} aria-label={`Preview ${v.name}`} onClick={() => preview(v.id)}>
-                {previewing === v.id ? <Square className="h-3.5 w-3.5 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
+              <button
+                type="button"
+                className={buttonClass("outline", "icon", "h-9 w-9 shrink-0")}
+                aria-label={previewing === v.id ? `Stop ${v.name}` : `Preview ${v.name}`}
+                aria-busy={loading === v.id}
+                onClick={() => void preview(v.id)}
+              >
+                {loading === v.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : previewing === v.id ? (
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                ) : (
+                  <Play className="h-4 w-4 fill-current" />
+                )}
               </button>
             </div>
           ))}
         </div>
+        {previewError && (
+          <p role="alert" className="text-sm text-destructive">
+            {previewError}
+          </p>
+        )}
+        {SINGLE_VOICE_LANGUAGES.includes(value.language) && (
+          <p className="text-xs text-muted-foreground">In {LANGUAGES.find((l) => l.id === value.language)?.name}, every narrator uses the same voice, each at its own pace.</p>
+        )}
       </div>
     </>
   );

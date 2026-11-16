@@ -15,17 +15,17 @@ export const LANGUAGES = [
   { id: "es", name: "Spanish", flag: "🇪🇸" },
   { id: "pt", name: "Portuguese", flag: "🇧🇷" },
   { id: "fr", name: "French", flag: "🇫🇷" },
-  { id: "de", name: "German", flag: "🇩🇪" },
   { id: "it", name: "Italian", flag: "🇮🇹" },
   { id: "hi", name: "Hindi", flag: "🇮🇳" },
 ];
 
+/** Narrators of the wizard. The Kokoro voice and pace behind each one, per language, are in voices.ts. */
 export const VOICES = [
-  { id: "adam", name: "Adam", gender: "Male", desc: "The well known voice of tiktok and instagram.", pitch: 0.8, rate: 1 },
-  { id: "alex", name: "Alex", gender: "Male", desc: "An upbeat and pleasant male voice. Great for Youtube, shorts and social media.", pitch: 1, rate: 1.1 },
-  { id: "bella", name: "Bella", gender: "Female", desc: "A soft, warm narrator for calm stories.", pitch: 1.2, rate: 0.95 }, // estimated
-  { id: "nova", name: "Nova", gender: "Female", desc: "Bright and energetic, made for fast facts.", pitch: 1.3, rate: 1.15 }, // estimated
-  { id: "marcus", name: "Marcus", gender: "Male", desc: "Deep and dramatic, perfect for scary stories.", pitch: 0.6, rate: 0.9 }, // estimated
+  { id: "adam", name: "Adam", gender: "Male", desc: "The well known voice of tiktok and instagram." },
+  { id: "alex", name: "Alex", gender: "Male", desc: "An upbeat and pleasant male voice. Great for Youtube, shorts and social media." },
+  { id: "bella", name: "Bella", gender: "Female", desc: "A soft, warm narrator for calm stories." },
+  { id: "nova", name: "Nova", gender: "Female", desc: "Bright and energetic, made for fast facts." },
+  { id: "marcus", name: "Marcus", gender: "Male", desc: "Deep and dramatic, perfect for scary stories." },
 ];
 
 export const ART_STYLES = [

@@ -1,6 +1,7 @@
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -14,7 +15,8 @@ import { env } from "@/lib/env";
 //
 // Key layout (everything of a user lives under one prefix, so deleting an account is one call):
 //   users/{userId}/music/{trackId}.{mp3|wav}
-//   users/{userId}/videos/{videoId}/...        (script, audio, images, final MP4 from Passo 6 on)
+//   users/{userId}/videos/{videoId}/...        (voice, images, final MP4 and thumbnail)
+//   previews/voices/v1/{language}-{voice}.wav  (wizard voice previews, shared by everyone)
 
 export type Storage = {
   client: S3Client;
@@ -55,6 +57,8 @@ export const keys = {
   user: (userId: string) => `users/${userId}/`,
   music: (userId: string, trackId: string, ext: "mp3" | "wav") => `users/${userId}/music/${trackId}.${ext}`,
   video: (userId: string, videoId: string) => `users/${userId}/videos/${videoId}/`,
+  /** Bump the version when the preview sentences or the voice mapping change. */
+  voicePreview: (language: string, voice: string) => `previews/voices/v1/${language}-${voice}.wav`,
 };
 
 export async function putObject(s: Storage, key: string, body: Uint8Array, contentType: string): Promise<void> {
@@ -68,6 +72,18 @@ export async function getObject(s: Storage, key: string, range?: string): Promis
   } catch (e) {
     const name = (e as { name?: string }).name;
     if (name === "NoSuchKey" || name === "NotFound") return null;
+    throw e;
+  }
+}
+
+/** Whether an object exists (no body is downloaded). */
+export async function objectExists(s: Storage, key: string): Promise<boolean> {
+  try {
+    await s.client.send(new HeadObjectCommand({ Bucket: s.bucket, Key: key }));
+    return true;
+  } catch (e) {
+    const name = (e as { name?: string }).name;
+    if (name === "NotFound" || name === "NoSuchKey") return false;
     throw e;
   }
 }

@@ -50,6 +50,10 @@ const envSchema = z.object({
   /** Reviews each script against the platforms' content rules (cheap classification). */
   CLAUDE_REVIEW_MODEL: z.string().min(1).default("claude-haiku-5-5"),
   CLAUDE_SCRIPT_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
+  /** Narration: "kokoro" (container "kokoro", profile "ai") or "fake" (silence). */
+  TTS_PROVIDER: z.enum(["fake", "kokoro"]).default("fake"),
+  /** Kokoro-FastAPI inside the Docker network (also used by the wizard's voice preview). */
+  KOKORO_URL: z.string().url().default("http://kokoro:8880"),
   /** Pause in each fake step, so progress can be watched in the dashboard (0 in tests). */
   FAKE_PROVIDER_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(0),
 }).refine((e) => e.SCRIPT_PROVIDER !== "claude" || e.ANTHROPIC_API_KEY, {

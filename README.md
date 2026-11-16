@@ -356,6 +356,7 @@ Todos os componentes atuais são orquestrados pelo Docker Compose.
 | `s3` | `chrislusf/seaweedfs:4.51` | Armazenamento de arquivos |
 | `s3-init` | `amazon/aws-cli:2.39.7` | Inicialização do bucket |
 | `mailpit` | `axllent/mailpit:v1.21.8` | Captura de e-mails |
+| `kokoro` | `ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.2` | Narração na CPU (só com o perfil `ai`; 4,9 GB; 4 CPUs e 4 GB) |
 | `e2e` | `mcr.microsoft.com/playwright:v1.64.1-noble` | Testes automatizados E2E |
 
 O serviço `e2e` é executado sob demanda com o perfil de testes.
@@ -369,6 +370,16 @@ O serviço `e2e` é executado sob demanda com o perfil de testes.
 5. A cada minuto, o worker confere vídeos esquecidos: os que ficaram fora da fila (Redis fora do ar na criação) voltam para ela, e os que falharam sem registro são marcados como falha e estornados.
 
 A montagem usa ffmpeg de verdade e gera MP4 1080×1920 H.264/AAC mais uma miniatura. A narração ainda é silêncio e as imagens são de cor sólida (passos 7 e 8). `FAKE_PROVIDER_DELAY_MS` (2 s no desenvolvimento) faz cada etapa falsa demorar, para o progresso aparecer no painel.
+
+### Narração com o Kokoro
+
+Com `TTS_PROVIDER=kokoro` e o perfil `ai` ligado (`COMPOSE_PROFILES=ai` no `.env`, ou `docker compose --profile ai up -d`), a narração vem do container `kokoro` (Kokoro-FastAPI v0.9.2 na CPU, sem custo por vídeo; o padrão `fake` gera silêncio):
+
+- **Como é gerada:** uma requisição por cena, com pausa de 250 ms entre cenas. A duração de cada cena sai do próprio áudio, e as imagens acompanham a fala. Cada palavra tem seu tempo, para as legendas.
+- **Idiomas:** inglês, espanhol, português, francês (uma voz só), italiano e hindi. O alemão saiu do assistente porque o Kokoro não tem.
+- **Velocidade:** cerca de 0,36× o tempo real em 4 CPUs (uma narração de 45 s leva ~16 s); o container usa ~2,3 GB de memória gerando.
+- **Prévia de voz:** o assistente toca o narrador real (`GET /api/voices/preview?voice=&language=`). Cada voz e idioma é gerada uma vez e fica guardada no S3.
+- **Medição:** `docker compose exec worker npx tsx scripts/tts-bench.ts`.
 
 ### Roteiro com a Claude API
 
@@ -387,7 +398,6 @@ Com `SCRIPT_PROVIDER=claude` e `ANTHROPIC_API_KEY` no `.env`, o roteiro vem da C
 | Serviço | Responsabilidade |
 |---|---|
 | `scheduler` | Agendamento de geração e publicação |
-| `kokoro` | Síntese de voz local |
 | `comfyui` | Geração de imagens com IA |
 | `caddy` | Proxy reverso e HTTPS |
 
@@ -525,6 +535,7 @@ Todas as rotas exigem login (sem sessão: `401`). Registro de outro usuário ou 
 | `POST /api/music` | Envia um MP3 ou WAV (até 10 MB) como corpo da requisição; nome original no cabeçalho `X-File-Name` |
 | `POST /api/music/import` | Importa `{ url }` de um MP3/WAV (só `https`, até 10 MB) |
 | `DELETE /api/music/:id` | Remove a faixa da biblioteca, das séries e do armazenamento |
+| `GET /api/voices/preview?voice=&language=` | Link assinado para a prévia do narrador naquele idioma (`503` com o serviço de voz fora) |
 | `GET /api/media/<arquivo>?exp=&sig=` | Entrega um arquivo por link assinado (sem login; o link é a permissão), com suporte a `Range` |
 
 Os campos das séries incluem `musicTrackIds` (até 10 faixas da própria biblioteca). Os vídeos prontos trazem `videoUrl` e `thumbnailUrl`, links assinados de 30 minutos para o MP4 e a miniatura.
@@ -672,7 +683,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Música de fundo (upload e importação) e armazenamento privado — Passo 4
 - [x] Fila de geração (BullMQ) e worker com etapas retomáveis, gerando MP4 real com provedores falsos — Passo 5
 - [x] Roteiro com a Claude API, com saída validada, revisão de conteúdo e custo por vídeo — Passo 6 (falta a bateria real)
-- [ ] Geração local de narração
+- [x] Narração local com o Kokoro na CPU, com tempos das palavras e prévia real no assistente — Passo 7
 - [ ] Geração local de imagens
 - [ ] Montagem automatizada dos vídeos
 - [ ] Sincronização de legendas e áudio

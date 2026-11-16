@@ -23,6 +23,8 @@ x-app-env: &app-env
   # The app sits behind Docker's port mapping (and Caddy in production): trust the Host header.
   AUTH_TRUST_HOST: "true"
   AUTH_RATE_LIMIT_SCALE: ${AUTH_RATE_LIMIT_SCALE:-1}
+  # Voice service (profile "ai"): the worker's narration and the wizard's voice preview.
+  KOKORO_URL: http://kokoro:8880
 
 services:
   web:
@@ -72,6 +74,8 @@ services:
       CLAUDE_SCRIPT_MODEL: ${CLAUDE_SCRIPT_MODEL:-claude-sonnet-5-5}
       CLAUDE_REVIEW_MODEL: ${CLAUDE_REVIEW_MODEL:-claude-haiku-5-5}
       CLAUDE_SCRIPT_EFFORT: ${CLAUDE_SCRIPT_EFFORT:-medium}
+      # Real narration with TTS_PROVIDER=kokoro (needs the "ai" profile: COMPOSE_PROFILES=ai in .env).
+      TTS_PROVIDER: ${TTS_PROVIDER:-fake}
       FAKE_PROVIDER_DELAY_MS: ${FAKE_PROVIDER_DELAY_MS:-2000}
     volumes:
       - .:/app
@@ -98,6 +102,25 @@ services:
       timeout: 5s
       start_period: 60s
       retries: 4
+
+  # Narration (Kokoro-FastAPI on the CPU, so the RTX 3060 stays free for the images). Only with the
+  # "ai" profile: docker compose --profile ai up -d (or COMPOSE_PROFILES=ai in .env). Internal only:
+  # no published port. The model ships inside the image (~4.9 GB), nothing is downloaded at start.
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.2
+    profiles: ["ai"]
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+    restart: unless-stopped
 
   # Applies pending migrations (./drizzle) and exits; web and worker start only after it succeeds.
   migrate:

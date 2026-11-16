@@ -403,7 +403,39 @@
     - **Bateria real** (`scripts/script-battery.ts`, 5 formatos × 3 idiomas en/pt/hi, mais a checagem de repetição; roda no container `worker`): as 15 chamadas voltaram com `400 Your credit balance is too low` (sem cobrança). **Pendente até a conta ter créditos**, junto com a revisão dos roteiros por amostragem.
     - **Prova sem custo:** worker com `SCRIPT_PROVIDER=claude` e a conta sem crédito. O vídeo falhou na 1ª tentativa com a mensagem genérica, o crédito voltou (56 → 57) e o log mostrou "ACTION NEEDED: the Anthropic account is out of credits".
 
+27. **Passo 7 — Narração com Kokoro (2026-11-16):**
+    - **Serviço:** `kokoro` no compose, só com o perfil `ai` (`docker compose --profile ai up -d`, ou `COMPOSE_PROFILES=ai` no `.env`).
+      - Imagem `ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.2`, de 30/10/2026: a v0.10.0 tinha só 8 dias e ficou de fora por prudência.
+      - Modelo dentro da imagem (4,9 GB), sem porta publicada, healthcheck por `curl /health`, limite de 4 CPUs e 4 GB (usa 1,5 GB parado e 2,3 GB gerando).
+    - **Cliente** `src/server/kokoro.ts`, usado pela web e pelo worker:
+      - chama `/dev/captioned_speech` com `response_format: "pcm"` e `return_timestamps: true`;
+      - o WAV do Kokoro vem com tamanho `FFFFFFFF` (estilo streaming), por isso o app pede PCM cru e monta o cabeçalho (`pcmToWav`);
+      - os tempos vêm em segundos, com a pontuação como item separado: só as palavras ficam, presas à duração do áudio;
+      - erros: 4xx = texto recusado (definitivo); 5xx, 429, tempo esgotado ou sem conexão = repetível.
+    - **Provedor** `src/worker/providers/kokoro-tts.ts`: uma requisição por cena, então a duração de cada cena sai exata do áudio e as imagens seguem a narração. Pausa de 250 ms entre cenas, palavras deslocadas para a posição certa no áudio inteiro. Idioma sem voz (por exemplo, `de` antigo) = falha definitiva com mensagem para o cliente.
+    - **Vozes** (`src/lib/voices.ts`): cada narrador do assistente × idioma → voz do Kokoro, escolhida pelas notas de qualidade de `/v1/audio/voices`.
+      - Em inglês: Adam → `am_michael` (o `am_adam` tem nota F+), Alex → `am_puck`, Bella → `af_bella`, Nova → `af_heart`, Marcus → `am_fenrir`.
+      - Em espanhol, português e italiano há uma voz masculina e uma feminina; em hindi, duas de cada; o francês tem só `ff_siwis` (o assistente avisa).
+      - Velocidade por narrador (Alex 1,1, Nova 1,12, Bella 0,95, Marcus 0,9), para vozes compartilhadas soarem diferentes.
+      - `pitch`/`rate` saíram do `VOICES` de `options.ts`, porque só serviam à voz do navegador.
+    - **Alemão removido** do assistente (o Kokoro não tem). Não havia séries em alemão: 520 em inglês e 44 em português.
+    - **Tempos das palavras conferidos em 2026-11-16** em inglês, português, espanhol, francês, italiano e hindi: uma marca por palavra, terminando com o áudio. O plano B (faster-whisper) não foi necessário; sem tempos, as palavras são distribuídas igualmente (`evenWords`).
+    - **Prévia de voz:**
+      - `GET /api/voices/preview?voice=&language=` devolve `{ url }`, gerada uma vez por voz e idioma e guardada em `previews/voices/v1/<idioma>-<voz>.wav` (no máximo 30 arquivos), servida pelo link assinado (a rota de mídia agora aceita `previews/`);
+      - 503 com mensagem amigável quando o Kokoro está fora;
+      - frases neutras em gênero (o hindi foi reescrito para servir às vozes femininas e masculinas);
+      - o assistente toca o áudio real, com carregamento, "Stop" e mensagem de erro.
+    - **Medição na CPU** (`scripts/tts-bench.ts`, 4 CPUs): fator de 0,35 a 0,39 do tempo real em todos os idiomas; uma narração de 45 s leva cerca de 16 s. No vídeo de teste, a etapa de voz levou 6,3 s para 16,1 s de fala.
+    - **Vídeo real:** com `TTS_PROVIDER=kokoro`, o MP4 saiu com duração igual à narração (16,10 s), volume médio de -22,5 dB (fala real; silêncio seria cerca de -91 dB) e 4 pausas entre cenas.
+    - **Testes:**
+      - `kokoro-tts.test.ts` (4): todas as vozes instaladas em todos os idiomas e sem alemão; cenas juntas com pausa, tempos deslocados, pontuação fora, corte no fim, WAV com tamanho certo; sem tempos; erros;
+      - `voice-preview.test.ts` (2): gera uma vez, guarda, link assinado; voz ou idioma inválido e serviço fora;
+      - `e2e/voice.spec.ts` (2): prévia em hindi tocando com o WAV real; aviso do francês e sem alemão na lista;
+      - resultado: typecheck ✅, lint ✅, Vitest 115/115 ✅, Playwright 51/51 ✅ duas vezes.
+
 ## Decisões
+- **Narração na CPU, uma requisição por cena:** a duração de cada cena sai do próprio áudio (as imagens acompanham a fala sem estimativa), ao custo de algumas requisições a mais por vídeo, o que é desprezível com o Kokoro local.
+- **Voz falsa continua o padrão do desenvolvimento** (`TTS_PROVIDER=fake`), porque o Kokoro pesa 4,9 GB e 2 GB de memória. Ligar: `TTS_PROVIDER=kokoro` e `COMPOSE_PROFILES=ai` no `.env`.
 - **Modelo do roteiro: Claude Sonnet 5.5** (como no `PASSOS.md`), configurável por `CLAUDE_SCRIPT_MODEL`. O Claude Opus 5.5 é mais capaz e custa o dobro (US$ 4/20 contra 2/10 por milhão de tokens). Trocar é só mudar a variável e reavaliar com a bateria.
 - **Problemas do nosso lado nunca aparecem crus para o cliente:** chave rejeitada, conta sem crédito ou requisição inválida viram "The script service is unavailable right now. Your credit is back; please try again later." O detalhe vai para o log do worker, marcado "ACTION NEEDED" quando exige ação.
 - **Roteiro falso continua o padrão do desenvolvimento:** com `SCRIPT_PROVIDER=claude`, cada vídeo gerado, inclusive pelos testes E2E (cerca de 10 por rodada), chama a API e custa dinheiro.
@@ -462,21 +494,22 @@
 
 ## Pendências
 - **Fechar o Passo 6:** colocar créditos na conta da Anthropic (Plans & Billing), rodar `docker compose exec worker npx tsx scripts/script-battery.ts` (cerca de US$ 0,50 a 1,00) e registrar aqui a revisão dos roteiros por amostragem. No Git Bash, use `MSYS_NO_PATHCONV=1` se passar um caminho `/tmp/...` como argumento.
-- **Depois: Passo 7 (narração com Kokoro)**, aguardando autorização.
+- **Próximo: Passo 8 (imagens com ComfyUI + FLUX na RTX 3060)**, aguardando autorização.
 - **Passo 12:** a série escolhe plataformas, não contas. Com dois canais do YouTube conectados, falta decidir em qual publicar (provavelmente escolher o canal na série).
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- **Os vídeos ainda saem dos provedores falsos:** narração em silêncio e imagens de cor sólida (o roteiro real existe com `SCRIPT_PROVIDER=claude`, mas ainda não foi validado na bateria real por falta de crédito). Voz e imagens reais entram nos passos 7 e 8; zoom/pan, transições, legendas e música, no Passo 9; o player no painel, no Passo 10 (por enquanto, miniatura e Download). Publish continua desativado até o Passo 12.
+- **As imagens ainda são de cor sólida** (Passo 8). Roteiro real com `SCRIPT_PROVIDER=claude` (ainda sem a bateria real, por falta de crédito) e voz real com `TTS_PROVIDER=kokoro` + perfil `ai`;
+- **O áudio do MP4 sai a 24 kHz** (a taxa do Kokoro), sem normalização de volume (pico de -1,1 dB no teste). A mixagem com música, o loudnorm e a reamostragem para 48 kHz entram no Passo 9;
+- **Prévia de voz e narração dependem do Kokoro rodando:** sem o perfil `ai`, uma prévia ainda não gerada responde 503 (as já geradas continuam servidas do S3), e vídeos com `TTS_PROVIDER=kokoro` são repetidos até o serviço voltar e, se não voltar, falham com estorno; zoom/pan, transições, legendas e música, no Passo 9; o player no painel, no Passo 10 (por enquanto, miniatura e Download). Publish continua desativado até o Passo 12.
 - **A etapa de imagens não tem fila própria de concorrência 1 ainda:** com a GPU (Passo 8), as imagens de vários vídeos ao mesmo tempo vão precisar de um limite próprio (uma imagem por vez na RTX 3060).
 - **Uma exclusão no meio de uma etapa pode deixar arquivos dessa etapa:** o worker apaga os arquivos do vídeo removido quando percebe a exclusão, mas um envio que termina depois dessa limpeza fica no bucket. É raro, e a varredura de órfãos (Passos 11/18) cobre.
 - **Arquivos órfãos possíveis:** se o armazenamento falhar ao excluir (vídeo, série, conta ou faixa), os arquivos ficam no bucket (o erro vai para o log). Uma varredura periódica entra com o agendador ou a manutenção (Passos 11/18).
 - **Duração da música não é calculada** (`duration_ms` fica vazio). O ffprobe preenche no Passo 9.
 - A lista de séries não é paginada: o limite por plano a mantém pequena (Pro ilimitado; paginar se algum dia passar de centenas).
 - O link "See plans" do aviso de limite leva à tela de cobrança, que ainda não vende planos (Passo 15).
-- A prévia de voz no assistente ainda usa a voz do navegador (o Kokoro entra no Passo 7).
 - **Sem verificação de e-mail nem recuperação de senha** até o Passo 16 (e-mails).
 - Conectar redes sociais ainda não é possível: o botão explica que chega com a publicação automática (Passo 12). Só as conexões criadas pelo seed aparecem.
 - Não há cobrança: o upgrade de plano só explica que os planos pagos ainda não abriram (Passo 15).

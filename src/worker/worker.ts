@@ -1,11 +1,11 @@
-import { type Queue, Worker } from "bullmq";
+import { type Queue, UnrecoverableError, Worker } from "bullmq";
 import type Redis from "ioredis";
 import { and, inArray, lt, sql } from "drizzle-orm";
 import type { Db } from "@/server/db";
 import { videos } from "@/server/db/schema";
 import { enqueueVideo, VIDEO_QUEUE, type VideoJobData, videoJobOptions } from "@/server/video-queue";
 import { failVideo, UNFINISHED } from "@/server/videos";
-import { failureMessage, type PipelineDeps, processVideo } from "./pipeline";
+import { failureMessage, type PipelineDeps, processVideo, StepError } from "./pipeline";
 
 // BullMQ side of the worker: runs the pipeline for each job, gives up after the last attempt
 // (the video is marked failed and its credit refunded) and recovers videos left behind.
@@ -27,7 +27,13 @@ export function createVideoWorker(o: VideoWorkerOptions): Worker<VideoJobData> {
     VIDEO_QUEUE,
     async (job) => {
       log(`video ${job.data.videoId}: attempt ${job.attemptsMade + 1}`);
-      return processVideo(o.deps, job.data.videoId);
+      try {
+        return await processVideo(o.deps, job.data.videoId);
+      } catch (e) {
+        // Retrying can't help (declined topic, content rules, bad API key): fail now, refund now.
+        if (e instanceof StepError && !e.retryable) throw new UnrecoverableError(e.message);
+        throw e;
+      }
     },
     {
       connection: o.connection,

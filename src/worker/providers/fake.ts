@@ -17,6 +17,8 @@ export const FAKE_MS_PER_WORD = 380;
 export function fakeScript(brief: SeriesBrief): VideoScript {
   const topic = brief.niche.trim().split(/\s+/).slice(0, 6).join(" ") || brief.name;
   return {
+    topic: `A quick look at ${topic}`,
+    format: brief.formats[0] ?? "facts",
     title: `${brief.name}: a quick look`,
     hook: `Here is something about ${topic} you probably didn't know.`,
     scenes: [
@@ -34,7 +36,7 @@ export function fakeScriptProvider(delayMs = 0): ScriptProvider {
   return {
     async write(brief) {
       await sleep(delayMs);
-      return fakeScript(brief);
+      return { script: fakeScript(brief), costMicroUsd: 0, model: "fake" };
     },
   };
 }

@@ -1,11 +1,11 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@/server/db";
 import { series, videoSteps, videos, type VideoScript } from "@/server/db/schema";
 import { deletePrefix, getObject, keys, putObject, type Storage } from "@/server/storage";
 import { UNFINISHED } from "@/server/videos";
-import type { Providers, SeriesBrief, WordTiming } from "./providers/types";
+import { ProviderError, type Providers, type SeriesBrief, type WordTiming } from "./providers/types";
 import { renderVideo } from "./render";
 
 // The video pipeline: script → voice → images → render. Each step stores its result (step output
@@ -23,7 +23,7 @@ export const STEPS = [
 type Step = (typeof STEPS)[number];
 export type StepName = Step["name"];
 
-type ScriptOut = { script: VideoScript };
+type ScriptOut = { script: VideoScript; model: string };
 type VoiceOut = { audioKey: string; durationMs: number; sceneDurationsMs: number[]; words: WordTiming[] };
 type ImagesOut = { imageKeys: string[] };
 type RenderOut = { videoKey: string; thumbnailKey: string; durationMs: number };
@@ -42,18 +42,26 @@ export type PipelineDeps = {
 /** The video was deleted (or finished elsewhere) while it was being made: stop quietly. */
 export class VideoGone extends Error {}
 
-/** A step failed. The message is shown to the customer, so it says which step, in plain words. */
+/**
+ * A step failed. The message is shown to the customer, so it says which step, in plain words.
+ * `retryable: false` (from a ProviderError) makes the queue fail the video at once.
+ */
 export class StepError extends Error {
   constructor(
     readonly step: StepName,
     message: string,
+    readonly retryable = true,
   ) {
     super(message);
   }
 }
 
+/** What a step returns: its output (saved in video_steps) and, for paid APIs, what it cost. */
+type StepResult = { output: Record<string, unknown>; costMicroUsd?: number };
+
 type Ctx = {
   videoId: string;
+  seriesId: string;
   userId: string;
   prefix: string;
   brief: SeriesBrief;
@@ -81,6 +89,7 @@ export async function processVideo(deps: PipelineDeps, videoId: string): Promise
   const dir = await mkdtemp(join(deps.tmpRoot, `${videoId}-`));
   const ctx: Ctx = {
     videoId,
+    seriesId: row.video.seriesId,
     userId: row.video.userId,
     prefix: keys.video(row.video.userId, videoId),
     brief: {
@@ -100,20 +109,24 @@ export async function processVideo(deps: PipelineDeps, videoId: string): Promise
       if (out[step.name]) continue; // already done in an earlier attempt
       await startStep(db, videoId, step);
       const started = Date.now();
-      let result: Record<string, unknown>;
+      let result: StepResult;
       try {
         result = await RUN[step.name](deps, ctx);
       } catch (e) {
         if (e instanceof VideoGone) throw e;
         const reason = e instanceof Error ? e.message : String(e);
+        const spent = e instanceof ProviderError ? e.costMicroUsd : 0;
         await db
           .update(videoSteps)
-          .set({ status: "failed", error: reason.slice(0, 1000), finishedAt: new Date(), durationMs: Date.now() - started })
+          .set({ status: "failed", error: reason.slice(0, 1000), finishedAt: new Date(), durationMs: Date.now() - started, costMicroUsd: sql`${videoSteps.costMicroUsd} + ${spent}` })
           .where(and(eq(videoSteps.videoId, videoId), eq(videoSteps.step, step.name)));
-        throw new StepError(step.name, `${step.label} failed: ${reason}`.slice(0, 600));
+        const retryable = !(e instanceof ProviderError) || e.retryable;
+        // A message written for the customer (declined topic, content rules) is shown as is.
+        const message = e instanceof ProviderError && !e.retryable ? reason : `${step.label} failed: ${reason}`;
+        throw new StepError(step.name, message.slice(0, 600), retryable);
       }
       await finishStep(db, videoId, step, result, Date.now() - started);
-      (out as Record<string, unknown>)[step.name] = result;
+      (out as Record<string, unknown>)[step.name] = result.output;
     }
 
     const r = out.render!;
@@ -155,10 +168,11 @@ async function startStep(db: Db, videoId: string, step: Step) {
   });
 }
 
-async function finishStep(db: Db, videoId: string, step: Step, output: Record<string, unknown>, durationMs: number) {
+async function finishStep(db: Db, videoId: string, step: Step, result: StepResult, durationMs: number) {
   const [saved] = await db
     .update(videoSteps)
-    .set({ status: "succeeded", output, finishedAt: new Date(), durationMs, error: null })
+    // Added to what earlier, failed attempts already spent: every call is paid for.
+    .set({ status: "succeeded", output: result.output, costMicroUsd: sql`${videoSteps.costMicroUsd} + ${result.costMicroUsd ?? 0}`, finishedAt: new Date(), durationMs, error: null })
     .where(and(eq(videoSteps.videoId, videoId), eq(videoSteps.step, step.name)))
     .returning({ id: videoSteps.id });
   if (!saved) throw new VideoGone(); // the row went with the deleted video
@@ -170,25 +184,36 @@ async function download(deps: PipelineDeps, key: string, file: string) {
   await writeFile(file, await obj.Body.transformToByteArray());
 }
 
-const RUN: Record<StepName, (deps: PipelineDeps, ctx: Ctx) => Promise<Record<string, unknown>>> = {
-  async script(deps, ctx): Promise<ScriptOut> {
-    const script = await deps.providers.script.write(ctx.brief);
+/** Topics of the series' earlier videos (newest first), so the script doesn't repeat them. */
+async function usedTopics(db: Db, seriesId: string, exceptVideoId: string): Promise<string[]> {
+  const rows = await db
+    .select({ topic: sql<string | null>`${videos.script}->>'topic'` })
+    .from(videos)
+    .where(and(eq(videos.seriesId, seriesId), ne(videos.id, exceptVideoId), isNotNull(videos.script)))
+    .orderBy(desc(videos.createdAt))
+    .limit(60);
+  return [...new Set(rows.map((r) => r.topic?.trim()).filter((t): t is string => !!t))];
+}
+
+const RUN: Record<StepName, (deps: PipelineDeps, ctx: Ctx) => Promise<StepResult>> = {
+  async script(deps, ctx) {
+    const { script, costMicroUsd, model } = await deps.providers.script.write(ctx.brief, { usedTopics: await usedTopics(deps.db, ctx.seriesId, ctx.videoId) });
     if (!script.scenes?.length) throw new Error("the script has no scenes");
     const [v] = await deps.db.update(videos).set({ script }).where(eq(videos.id, ctx.videoId)).returning({ id: videos.id });
     if (!v) throw new VideoGone();
-    return { script };
+    return { output: { script, model } satisfies ScriptOut, costMicroUsd };
   },
 
-  async voice(deps, ctx): Promise<VoiceOut> {
+  async voice(deps, ctx) {
     const scenes = ctx.out.script!.script.scenes.map((s) => s.narration);
     const n = await deps.providers.tts.speak({ scenes, voice: ctx.brief.voice, language: ctx.brief.language });
     if (n.sceneDurationsMs.length !== scenes.length) throw new Error(`the narration has ${n.sceneDurationsMs.length} parts for ${scenes.length} scenes`);
     const audioKey = `${ctx.prefix}voice.${n.mimeType === "audio/wav" ? "wav" : "mp3"}`;
     await putObject(deps.storage, audioKey, n.audio, n.mimeType);
-    return { audioKey, durationMs: n.durationMs, sceneDurationsMs: n.sceneDurationsMs, words: n.words };
+    return { output: { audioKey, durationMs: n.durationMs, sceneDurationsMs: n.sceneDurationsMs, words: n.words } satisfies VoiceOut };
   },
 
-  async images(deps, ctx): Promise<ImagesOut> {
+  async images(deps, ctx) {
     const scenes = ctx.out.script!.script.scenes.map((s) => s.visual);
     const images = await deps.providers.images.draw({ scenes, artStyle: ctx.brief.artStyle, workDir: ctx.dir });
     if (images.length !== scenes.length) throw new Error(`got ${images.length} images for ${scenes.length} scenes`);
@@ -198,10 +223,10 @@ const RUN: Record<StepName, (deps: PipelineDeps, ctx: Ctx) => Promise<Record<str
       await putObject(deps.storage, key, img.data, img.mimeType);
       imageKeys.push(key);
     }
-    return { imageKeys };
+    return { output: { imageKeys } satisfies ImagesOut };
   },
 
-  async render(deps, ctx): Promise<RenderOut> {
+  async render(deps, ctx) {
     const { audioKey, sceneDurationsMs } = ctx.out.voice!;
     const audio = join(ctx.dir, `voice${audioKey.slice(audioKey.lastIndexOf("."))}`);
     await download(deps, audioKey, audio);
@@ -218,7 +243,7 @@ const RUN: Record<StepName, (deps: PipelineDeps, ctx: Ctx) => Promise<Record<str
     const thumbnailKey = `${ctx.prefix}thumbnail.jpg`;
     await putObject(deps.storage, videoKey, new Uint8Array(await readFile(outFile)), "video/mp4");
     await putObject(deps.storage, thumbnailKey, new Uint8Array(await readFile(thumbFile)), "image/jpeg");
-    return { videoKey, thumbnailKey, durationMs };
+    return { output: { videoKey, thumbnailKey, durationMs } satisfies RenderOut };
   },
 };
 

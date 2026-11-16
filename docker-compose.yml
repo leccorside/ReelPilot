@@ -66,7 +66,12 @@ services:
       CHOKIDAR_USEPOLLING: "true"
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
       WORKER_TMP_DIR: /tmp/reelpilot
-      AI_PROVIDERS: ${AI_PROVIDERS:-fake}
+      # Real scripts with SCRIPT_PROVIDER=claude in .env (paid: every generated video calls the API).
+      SCRIPT_PROVIDER: ${SCRIPT_PROVIDER:-fake}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_SCRIPT_MODEL: ${CLAUDE_SCRIPT_MODEL:-claude-sonnet-5-5}
+      CLAUDE_REVIEW_MODEL: ${CLAUDE_REVIEW_MODEL:-claude-haiku-5-5}
+      CLAUDE_SCRIPT_EFFORT: ${CLAUDE_SCRIPT_EFFORT:-medium}
       FAKE_PROVIDER_DELAY_MS: ${FAKE_PROVIDER_DELAY_MS:-2000}
     volumes:
       - .:/app

@@ -9,6 +9,7 @@ import { createDb } from "@/server/db";
 import { videos } from "@/server/db/schema";
 import { createVideoQueue, enqueueVideo, queueConnection, VIDEO_QUEUE, videoJobOptions } from "@/server/video-queue";
 import { fakeProviders } from "./providers/fake";
+import { ProviderError } from "./providers/types";
 import { credits, newVideo, stepRows, testStorage, testTmpRoot, videoRow, waitFor } from "./test-helpers";
 import { createVideoWorker, recoverVideos } from "./worker";
 
@@ -77,6 +78,30 @@ describe("video queue", { timeout: 90_000 }, () => {
       });
       expect(v.error).toBe("Recording the voice failed: Kokoro is not answering (tried 3 times)");
       expect((await stepRows(db, videoId)).voice).toMatchObject({ status: "failed", attempts: 3 });
+      expect(await credits(db, userId, videoId)).toEqual({ debits: 1, refunds: 1, balance: 5 });
+    } finally {
+      await worker.close();
+    }
+  });
+
+  it("a failure that retrying can't fix (declined topic) fails the video at the first attempt, refunded", async () => {
+    const { userId, videoId } = await newVideo(db);
+    const declined = "The AI declined to write a script for this series. Change the series' niche and try again.";
+    const worker = createVideoWorker({
+      connection: queueConnection(redisUrl.toString()),
+      prefix,
+      concurrency: 1,
+      deps: { db, storage, tmpRoot, providers: { ...fakeProviders(), script: { write: async () => Promise.reject(new ProviderError(declined, false)) } } },
+      log: () => {},
+    });
+    try {
+      await enqueueVideo(queue, videoId, fastRetries);
+      const v = await waitFor("the video to fail", async () => {
+        const row = await videoRow(db, videoId);
+        return row.status === "failed" && row;
+      });
+      expect(v.error).toBe(declined); // no "(tried 3 times)": one attempt only
+      expect((await stepRows(db, videoId)).script).toMatchObject({ status: "failed", attempts: 1 });
       expect(await credits(db, userId, videoId)).toEqual({ debits: 1, refunds: 1, balance: 5 });
     } finally {
       await worker.close();

@@ -6,7 +6,7 @@ import { createDb } from "@/server/db";
 import { createStorage } from "@/server/storage";
 import { createVideoQueue, queueConnection } from "@/server/video-queue";
 import { cpuQuota, ffmpegThreads } from "./ffmpeg";
-import { fakeProviders } from "./providers/fake";
+import { createProviders, describeProviders } from "./providers";
 import { createVideoWorker, recoverVideos } from "./worker";
 
 // Entry point of the "worker" container: consumes the "video-generation" queue.
@@ -19,7 +19,7 @@ async function main() {
   const e = env();
   const { db, client } = createDb(e.DATABASE_URL, { max: e.WORKER_CONCURRENCY + 2 });
   const storage = createStorage({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, accessKey: e.S3_ACCESS_KEY, secretKey: e.S3_SECRET_KEY, bucket: e.S3_BUCKET });
-  const providers = fakeProviders(e.FAKE_PROVIDER_DELAY_MS);
+  const providers = createProviders(e);
 
   // Own subfolder per container (the volume may be shared by scaled workers). Whatever is in it
   // is from a previous run of this container that was stopped mid-video: start clean.
@@ -32,7 +32,7 @@ async function main() {
   const queue = createVideoQueue(queueConn);
   const threads = ffmpegThreads(e.WORKER_CONCURRENCY);
   const worker = createVideoWorker({ connection: workerConnection, deps: { db, storage, providers, tmpRoot, ffmpegThreads: threads }, concurrency: e.WORKER_CONCURRENCY });
-  console.log(`[worker] started: ${e.WORKER_CONCURRENCY} at a time, ${cpuQuota()} CPU, ${threads} ffmpeg thread(s) each, providers=${e.AI_PROVIDERS}, scratch=${tmpRoot}`);
+  console.log(`[worker] started: ${e.WORKER_CONCURRENCY} at a time, ${cpuQuota()} CPU, ${threads} ffmpeg thread(s) each, ${describeProviders(e)}, scratch=${tmpRoot}`);
 
   const heartbeat = setInterval(() => {
     if (worker.isRunning() && workerConnection.status === "ready") void writeFile(HEARTBEAT_FILE, String(Date.now())).catch(() => {});

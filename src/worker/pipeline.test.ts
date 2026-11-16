@@ -4,11 +4,11 @@ import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { createDb } from "@/server/db";
 import { videos } from "@/server/db/schema";
 import { keys, listKeys } from "@/server/storage";
-import { deleteVideo, failVideo } from "@/server/videos";
+import { createVideo, deleteVideo, failVideo } from "@/server/videos";
 import { ffmpegThreads, probe } from "./ffmpeg";
 import { failureMessage, processVideo, StepError, type PipelineDeps } from "./pipeline";
 import { FAKE_MS_PER_WORD, fakeProviders, fakeScript } from "./providers/fake";
-import type { Providers } from "./providers/types";
+import { ProviderError, type Providers } from "./providers/types";
 import { credits, downloadTo, newVideo, stepRows, testStorage, testTmpRoot, videoRow } from "./test-helpers";
 import { silentWav } from "./wav";
 
@@ -141,6 +141,43 @@ describe("video pipeline", { timeout: 90_000 }, () => {
     await db.update(videos).set({ status: "ready" }).where(eq(videos.id, other.videoId));
     expect(await processVideo(deps(), other.videoId)).toBe("skipped");
     expect(await processVideo(deps(), "00000000-0000-4000-8000-000000000000")).toBe("skipped");
+  });
+
+  it("the script step gets the series' earlier topics and records the cost of every attempt", async () => {
+    const { userId, seriesId, videoId } = await newVideo(db);
+    const seen: string[][] = [];
+    let fail = true;
+    const base = fakeProviders();
+    const providers: Providers = {
+      ...base,
+      script: {
+        write: async (b, o) => {
+          seen.push(o?.usedTopics ?? []);
+          if (fail) {
+            fail = false;
+            throw Object.assign(new ProviderError("the script service is busy (rate limited)", true), { costMicroUsd: 300 });
+          }
+          return { script: { ...fakeScript(b), topic: `Topic ${seen.length}` }, costMicroUsd: 7200, model: "claude-sonnet-5-5" };
+        },
+      },
+    };
+    expect(await processVideo(deps(providers), videoId).catch((e) => e.message)).toBe("Writing the script failed: the script service is busy (rate limited)");
+    expect(await processVideo(deps(providers), videoId)).toBe("ready");
+    expect((await stepRows(db, videoId)).script).toMatchObject({ attempts: 2, costMicroUsd: 7500, output: { model: "claude-sonnet-5-5" } });
+
+    // The next video of the same series is told what was covered.
+    const next = await createVideo(db, userId, seriesId);
+    expect(await processVideo(deps(providers), next.id)).toBe("ready");
+    expect(seen.at(-1)).toEqual(["Topic 2"]);
+  });
+
+  it("a provider failure that can't be fixed by retrying is marked as final, with the customer's message as is", async () => {
+    const { videoId } = await newVideo(db);
+    const declined = "The AI declined to write a script for this series. Change the series' niche and try again.";
+    const providers: Providers = { ...fakeProviders(), script: { write: async () => Promise.reject(new ProviderError(declined, false)) } };
+    const err = await processVideo(deps(providers), videoId).catch((e) => e);
+    expect(err).toBeInstanceOf(StepError);
+    expect(err).toMatchObject({ retryable: false, message: declined });
   });
 
   it("explains final failures in plain words", () => {

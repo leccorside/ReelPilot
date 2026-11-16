@@ -368,7 +368,19 @@ O serviço `e2e` é executado sob demanda com o perfil de testes.
 4. Se o worker cair no meio, o BullMQ entrega o vídeo a outro worker (ou ao mesmo, quando religar), que continua da etapa em que parou, sem cobrar de novo.
 5. A cada minuto, o worker confere vídeos esquecidos: os que ficaram fora da fila (Redis fora do ar na criação) voltam para ela, e os que falharam sem registro são marcados como falha e estornados.
 
-A montagem usa ffmpeg de verdade e gera MP4 1080×1920 H.264/AAC mais uma miniatura. Enquanto os provedores de IA não existem (`AI_PROVIDERS=fake`), o roteiro é fixo, a narração é silêncio e as imagens são de cor sólida. `FAKE_PROVIDER_DELAY_MS` (2 s no desenvolvimento) faz cada etapa demorar para o progresso aparecer no painel.
+A montagem usa ffmpeg de verdade e gera MP4 1080×1920 H.264/AAC mais uma miniatura. A narração ainda é silêncio e as imagens são de cor sólida (passos 7 e 8). `FAKE_PROVIDER_DELAY_MS` (2 s no desenvolvimento) faz cada etapa falsa demorar, para o progresso aparecer no painel.
+
+### Roteiro com a Claude API
+
+Com `SCRIPT_PROVIDER=claude` e `ANTHROPIC_API_KEY` no `.env`, o roteiro vem da Claude API (o padrão `fake` usa um roteiro fixo, sem custo):
+
+- **Escrita:** `CLAUDE_SCRIPT_MODEL` (padrão `claude-sonnet-5-5`) escreve em JSON validado: tema, formato, título, gancho, 4 a 8 cenas (narração no idioma da série, descrição visual em inglês), legenda e hashtags, com 90 a 130 palavras (cerca de 35 a 55 s). Fora do formato, há um pedido de correção.
+- **Revisão:** `CLAUDE_REVIEW_MODEL` (padrão `claude-haiku-5-5`) confere as regras de conteúdo das plataformas.
+- **Temas:** os temas dos vídeos anteriores da série não se repetem.
+- **Falhas definitivas:** recusa, conteúdo proibido ou problema da conta falham o vídeo na hora, com estorno. O cliente nunca vê detalhes da conta; o log do worker mostra "ACTION NEEDED".
+- **Custo:** cada vídeo fica registrado em `video_steps.cost_micro_usd`.
+
+> ⚠️ Com `SCRIPT_PROVIDER=claude`, todo vídeo gerado, inclusive pelos testes E2E, faz chamadas pagas. A bateria real de validação é `docker compose exec worker npx tsx scripts/script-battery.ts` (5 formatos × 3 idiomas, cerca de US$ 0,50 a 1,00).
 
 ### Serviços planejados
 
@@ -659,7 +671,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Gerenciamento das séries (criar, editar todos os campos e a música, pausar, retomar, excluir)
 - [x] Música de fundo (upload e importação) e armazenamento privado — Passo 4
 - [x] Fila de geração (BullMQ) e worker com etapas retomáveis, gerando MP4 real com provedores falsos — Passo 5
-- [ ] Integração com provedores de roteiro
+- [x] Roteiro com a Claude API, com saída validada, revisão de conteúdo e custo por vídeo — Passo 6 (falta a bateria real)
 - [ ] Geração local de narração
 - [ ] Geração local de imagens
 - [ ] Montagem automatizada dos vídeos

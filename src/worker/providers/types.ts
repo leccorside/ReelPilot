@@ -1,8 +1,8 @@
 import type { VideoScript } from "@/server/db/schema";
 
 // What each step of the pipeline needs from the outside world. Every provider has a fake
-// implementation (./fake.ts) used in tests and in development without the AI services; the real
-// ones arrive in Passo 6 (script, Claude API), 7 (voice, Kokoro) and 8 (images, ComfyUI + FLUX).
+// implementation (./fake.ts) used in tests and in development without the AI services. Real ones:
+// script = Claude API (./claude-script.ts, Passo 6); voice = Kokoro (Passo 7); images = ComfyUI (Passo 8).
 
 export type SeriesBrief = {
   name: string;
@@ -27,8 +27,17 @@ export type Narration = {
 
 export type SceneImage = { data: Uint8Array; mimeType: "image/png" | "image/jpeg" };
 
+export type ScriptResult = {
+  script: VideoScript;
+  /** Estimated cost of the calls that produced it, in millionths of a dollar (0 for fakes). */
+  costMicroUsd: number;
+  /** Which model wrote it ("fake" for the fake provider). */
+  model: string;
+};
+
 export interface ScriptProvider {
-  write(brief: SeriesBrief): Promise<VideoScript>;
+  /** `usedTopics`: subjects of the series' earlier videos, not to be repeated. */
+  write(brief: SeriesBrief, opts?: { usedTopics?: string[] }): Promise<ScriptResult>;
 }
 
 export interface TtsProvider {
@@ -41,3 +50,20 @@ export interface ImageProvider {
 }
 
 export type Providers = { script: ScriptProvider; tts: TtsProvider; images: ImageProvider };
+
+/**
+ * A provider failure. `retryable: false` means trying again can't help (the AI declined the topic,
+ * the content breaks the platforms' rules, the API key is wrong): the video fails at once, with
+ * the credit refunded, instead of using up its attempts.
+ */
+export class ProviderError extends Error {
+  /** What the failed attempt already spent (paid API calls before the failure), in millionths of a dollar. */
+  costMicroUsd = 0;
+
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+  }
+}

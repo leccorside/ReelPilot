@@ -42,10 +42,19 @@ const envSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
   /** Scratch space for a video being made (a Docker volume); each video gets its own folder. */
   WORKER_TMP_DIR: z.string().min(1).default("/tmp/reelpilot"),
-  /** "fake" until the real providers arrive (script: Passo 6, voice: 7, images: 8). */
-  AI_PROVIDERS: z.enum(["fake"]).default("fake"),
+  /** Scripts: "claude" (Claude API, needs ANTHROPIC_API_KEY) or "fake" (fixed script, no cost). */
+  SCRIPT_PROVIDER: z.enum(["fake", "claude"]).default("fake"),
+  ANTHROPIC_API_KEY: optionalString,
+  /** Writes the scripts (the plan's choice; claude-opus-5-5 is more capable and costs twice as much). */
+  CLAUDE_SCRIPT_MODEL: z.string().min(1).default("claude-sonnet-5-5"),
+  /** Reviews each script against the platforms' content rules (cheap classification). */
+  CLAUDE_REVIEW_MODEL: z.string().min(1).default("claude-haiku-5-5"),
+  CLAUDE_SCRIPT_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
   /** Pause in each fake step, so progress can be watched in the dashboard (0 in tests). */
   FAKE_PROVIDER_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(0),
+}).refine((e) => e.SCRIPT_PROVIDER !== "claude" || e.ANTHROPIC_API_KEY, {
+  message: "SCRIPT_PROVIDER=claude precisa de ANTHROPIC_API_KEY",
+  path: ["ANTHROPIC_API_KEY"],
 });
 
 export type Env = z.infer<typeof envSchema>;

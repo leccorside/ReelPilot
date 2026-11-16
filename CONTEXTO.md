@@ -1,7 +1,7 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 5 estão concluídos**: fundação, banco, autenticação, API do painel, armazenamento de arquivos e fila de geração com worker.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 5 estão concluídos**: fundação, banco, autenticação, API do painel, armazenamento de arquivos e fila de geração com worker. O **Passo 6** (roteiro com a Claude API) está implementado e testado com cliente simulado; falta a bateria real, bloqueada pela conta da Anthropic sem créditos.
 - **Geração de vídeos (Passo 5):** "Generate video" coloca o vídeo na fila BullMQ `video-generation`, e o serviço `worker` executa roteiro → narração → imagens → montagem, com etapas retomáveis, 3 tentativas e estorno na falha definitiva. Por enquanto com provedores falsos (roteiro fixo, silêncio, imagens de cor sólida) e ffmpeg real: sai um MP4 1080×1920 com miniatura, que aparece no painel e pode ser baixado.
 - **Arquivos:**
   - bucket S3 privado (SeaweedFS), acessado só pelo app;
@@ -381,7 +381,32 @@
     - **Prova manual do critério do passo:** vídeo criado pela API na conta de demonstração, `docker compose kill worker` na etapa de imagens e `up` de novo. O vídeo ficou pronto (15,6 s), com roteiro e voz em 1 tentativa, imagens em 2 e o extrato com um único `video_debit`. A imagem de produção do worker também gerou um vídeo no teste E2E.
     - **Carga real:** a varredura de recuperação encontrou 265 vídeos antigos parados "In queue" no banco de desenvolvimento (das contas de teste E2E, criados antes de existir worker) e os pôs na fila. Com 3 workers (`--scale worker=3`), todos ficaram prontos sem nenhuma etapa falha, inclusive os interrompidos pelos reinícios do `tsx watch`.
 
+26. **Passo 6 — Roteiro com IA (2026-11-14), implementado; falta a bateria real (conta sem créditos):**
+    - **Provedor** `src/worker/providers/claude-script.ts` (`@anthropic-ai/sdk` 1.8.0), ligado com `SCRIPT_PROVIDER=claude` (o padrão continua `fake`, sem custo):
+      1. o modelo que escreve (`CLAUDE_SCRIPT_MODEL`, padrão `claude-sonnet-5-5` como no plano; esforço `medium`) devolve o roteiro em JSON pela saída estruturada (`client.beta.messages.parse` + `betaZodOutputFormat`, com schema em `zod/v4`);
+      2. `scriptProblems()` confere 4 a 8 cenas, 70 a 170 palavras (pede 90 a 130, cerca de 35 a 55 s), gancho igual ao início da 1ª cena, formato permitido e campos preenchidos; se algo falha, há **um** pedido de correção com os problemas e o rascunho;
+      3. o modelo revisor (`CLAUDE_REVIEW_MODEL`, padrão `claude-haiku-5-5`, esforço `low`) confere as regras das plataformas; havendo problema, uma reescrita; um segundo "não" falha o vídeo de vez.
+    - **Prompt:**
+      - o prompt de sistema é único para todas as séries (guia dos 5 formatos, regras de escrita, regras de conteúdo para 13+), com `cache_control`;
+      - a mensagem da série leva nome e nicho dentro de `<series_brief>`, tratados como descrição e não como instruções (proteção contra instruções escondidas no nicho), além de idioma, formatos e temas já usados;
+      - `visual` e `topic` saem sempre em inglês (alimentam o modelo de imagens e a lista de temas);
+      - hashtags normalizadas (`cleanHashtags`).
+    - **Fallback de recusa:** `fallbacks: "default"` com o beta `server-side-fallback-2026-07-01` no modelo que escreve (o Haiku não tem). Uma recusa que sobra depois disso falha o vídeo na hora, com mensagem para o cliente.
+    - **Temas sem repetição:** `VideoScript` ganhou `topic` e `format` (JSON, sem migração). A etapa busca os `script->>'topic'` dos últimos 60 vídeos da série e os passa como "não repetir".
+    - **Custo:** `src/worker/providers/pricing.ts` calcula os milionésimos de dólar de cada resposta (entrada, saída, leitura e escrita de cache, pelo modelo que respondeu). O total vai para `video_steps.cost_micro_usd`, somado entre as tentativas: um `ProviderError` carrega o que a tentativa que falhou já gastou.
+    - **Falhas que não adianta repetir:** `ProviderError(retryable: false)` vira `StepError(retryable: false)` e, no worker, `UnrecoverableError` do BullMQ: o vídeo falha na 1ª tentativa, com estorno e a mensagem do cliente sem prefixo de etapa. Valem para recusa, regra de conteúdo e problema do nosso lado (chave, crédito, requisição).
+    - **Testes:**
+      - `src/worker/providers/claude-script.test.ts` (9, com cliente simulado): roteiro bom, prompt igual entre séries, correção de tamanho, conteúdo barrado duas vezes, recusa e corte, erros da API, checagens, hashtags, nicho tratado como dado;
+      - `pipeline.test.ts` (+2): temas anteriores e custo acumulado entre tentativas; falha definitiva sem prefixo;
+      - `queue.test.ts` (+1): falha definitiva na 1ª tentativa, com estorno;
+      - resultado: typecheck ✅, lint ✅, Vitest 109/109 ✅, Playwright 49/49 ✅ duas vezes.
+    - **Bateria real** (`scripts/script-battery.ts`, 5 formatos × 3 idiomas en/pt/hi, mais a checagem de repetição; roda no container `worker`): as 15 chamadas voltaram com `400 Your credit balance is too low` (sem cobrança). **Pendente até a conta ter créditos**, junto com a revisão dos roteiros por amostragem.
+    - **Prova sem custo:** worker com `SCRIPT_PROVIDER=claude` e a conta sem crédito. O vídeo falhou na 1ª tentativa com a mensagem genérica, o crédito voltou (56 → 57) e o log mostrou "ACTION NEEDED: the Anthropic account is out of credits".
+
 ## Decisões
+- **Modelo do roteiro: Claude Sonnet 5.5** (como no `PASSOS.md`), configurável por `CLAUDE_SCRIPT_MODEL`. O Claude Opus 5.5 é mais capaz e custa o dobro (US$ 4/20 contra 2/10 por milhão de tokens). Trocar é só mudar a variável e reavaliar com a bateria.
+- **Problemas do nosso lado nunca aparecem crus para o cliente:** chave rejeitada, conta sem crédito ou requisição inválida viram "The script service is unavailable right now. Your credit is back; please try again later." O detalhe vai para o log do worker, marcado "ACTION NEEDED" quando exige ação.
+- **Roteiro falso continua o padrão do desenvolvimento:** com `SCRIPT_PROVIDER=claude`, cada vídeo gerado, inclusive pelos testes E2E (cerca de 10 por rodada), chama a API e custa dinheiro.
 - **Worker em Alpine, não em Debian** (mudança em relação ao plano): no desenvolvimento, o worker usa o mesmo volume `node_modules` da web, compilado para musl (esbuild, argon2), que não carregaria numa imagem glibc. O ffmpeg do Alpine é atual (8.1, com libx264). Na produção, o worker é um único arquivo empacotado e não precisa de `node_modules`.
 - **Threads do ffmpeg divididas pela cota de CPU** (`ffmpegThreads`, lendo `/sys/fs/cgroup/cpu.max`): dentro do container, o ffmpeg enxerga os 8 núcleos da máquina e abre cerca de 12 threads por vídeo. Com vários vídeos numa cota de 2 CPUs, o Linux estrangulava tudo (montagem de 30 a 130 s, contra 1 a 2 s sozinha) e a memória encostava nos 2 GB.
 - **Concorrência padrão de 2 vídeos por container**; para mais vazão, mais containers (`--scale worker=N`), e não mais vídeos por container: com 4 por container, a montagem ficou 3 vezes mais lenta.
@@ -421,6 +446,8 @@
 - **E2E instável na bateria completa** (testes diferentes estourando 60 s a cada rodada, todos passando isolados): os workers padrão (metade dos núcleos) sobrecarregavam o único servidor de desenvolvimento. `workers: 4` no `playwright.config.ts` deixou a bateria estável e mais rápida (2,2 min contra 2,9 a 4,1).
 - **`docker compose build` falhava com "failed to execute bake: exit status 1"** (2026-11-14), sem outro detalhe. Causa: a sessão estava em `d:\...` (letra minúscula), o contexto do build virou `d:\PROJETOS\...` e o Dockerfile `D:\PROJETOS\...`, e o buildx bake considera o Dockerfile fora do contexto. Correção: o `dc.ps1` passou a sempre usar a letra da unidade em maiúscula. Diagnóstico: `docker compose build --print` mostra os dois caminhos.
 - **`dc.ps1 prod-build`/`prod-up` montavam `docker -f …` sem o `compose`** ("unknown shorthand flag: 'f'"). Corrigido; o `prod-build` agora constrói web, worker e migrate.
+- **Docker caiu no meio do trabalho por causa da unidade E:** (2026-11-14, 23:49). O log do backend mostrava `installing main distribution: creating distribution destination dir: mkdir E:\docker: O sistema não pode encontrar o caminho especificado`, e a distro `docker-desktop` sumiu do `wsl -l -v`. O E: (onde ficam os `.vhdx`) estava indisponível naquele instante. Correção: com o E: de volta, fechar todos os processos do Docker Desktop e abrir de novo. Ele recriou a distro principal, e o disco de dados com os volumes ficou intacto (276 vídeos conferidos). Se acontecer de novo, conferir se o E: está montado antes de mexer em qualquer coisa.
+- **`npm install -D` pelo `dc.ps1` instalou como dependência de produção:** o PowerShell interpreta `-D` como o parâmetro comum `-Debug` do script e o descarta. Use `--save-dev` (ou o Bash).
 - **Docker Desktop fechado depois do `wsl --shutdown`** da migração do Ubuntu (2026-11-13): `failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`. Basta abrir o Docker Desktop de novo.
 - **Montagem lenta e memória no limite com vários vídeos por container:** ver a decisão "threads do ffmpeg divididas pela cota de CPU". A primeira tentativa (escalar a imagem uma vez antes de montar) não ajudava: sozinho, o ffmpeg já fazia isso em 1 s; o problema era a disputa de threads.
 - **Aviso de build conhecido e inofensivo:** a `jose` (usada pelo Auth.js) referencia `CompressionStream`, que não existe no runtime Edge. Os tokens não usam compressão.
@@ -434,14 +461,15 @@
   - `favicon.ico` → criado em `public/`.
 
 ## Pendências
-- **Próximo: Passo 6 (roteiro com IA pela Claude API)**, aguardando autorização. Precisa de uma `ANTHROPIC_API_KEY` no `.env`.
+- **Fechar o Passo 6:** colocar créditos na conta da Anthropic (Plans & Billing), rodar `docker compose exec worker npx tsx scripts/script-battery.ts` (cerca de US$ 0,50 a 1,00) e registrar aqui a revisão dos roteiros por amostragem. No Git Bash, use `MSYS_NO_PATHCONV=1` se passar um caminho `/tmp/...` como argumento.
+- **Depois: Passo 7 (narração com Kokoro)**, aguardando autorização.
 - **Passo 12:** a série escolhe plataformas, não contas. Com dois canais do YouTube conectados, falta decidir em qual publicar (provavelmente escolher o canal na série).
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- **Os vídeos ainda saem dos provedores falsos:** roteiro fixo, narração em silêncio e imagens de cor sólida. A IA real entra nos passos 6 a 8; zoom/pan, transições, legendas e música, no Passo 9; o player no painel, no Passo 10 (por enquanto, miniatura e Download). Publish continua desativado até o Passo 12.
+- **Os vídeos ainda saem dos provedores falsos:** narração em silêncio e imagens de cor sólida (o roteiro real existe com `SCRIPT_PROVIDER=claude`, mas ainda não foi validado na bateria real por falta de crédito). Voz e imagens reais entram nos passos 7 e 8; zoom/pan, transições, legendas e música, no Passo 9; o player no painel, no Passo 10 (por enquanto, miniatura e Download). Publish continua desativado até o Passo 12.
 - **A etapa de imagens não tem fila própria de concorrência 1 ainda:** com a GPU (Passo 8), as imagens de vários vídeos ao mesmo tempo vão precisar de um limite próprio (uma imagem por vez na RTX 3060).
 - **Uma exclusão no meio de uma etapa pode deixar arquivos dessa etapa:** o worker apaga os arquivos do vídeo removido quando percebe a exclusão, mas um envio que termina depois dessa limpeza fica no bucket. É raro, e a varredura de órfãos (Passos 11/18) cobre.
 - **Arquivos órfãos possíveis:** se o armazenamento falhar ao excluir (vídeo, série, conta ou faixa), os arquivos ficam no bucket (o erro vai para o log). Uma varredura periódica entra com o agendador ou a manutenção (Passos 11/18).

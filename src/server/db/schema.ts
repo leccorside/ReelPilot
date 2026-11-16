@@ -210,10 +210,16 @@ export const seriesMusicTracks = pgTable(
 // Videos and pipeline steps
 // ---------------------------------------------------------------------------------------------
 
-/** Script produced in Passo 6, stored as JSON. */
+/** Script of a video (worker step "script"), stored as JSON. */
 export type VideoScript = {
+  /** Short English label of the subject; the series' earlier topics are not repeated. */
+  topic?: string;
+  /** Format chosen among the series' formats (storytelling, top5, howto, facts, quiz). */
+  format?: string;
   title: string;
+  /** The first sentence spoken (also the first scene's narration). */
   hook: string;
+  /** Narration in the series' language; `visual` always in English (it feeds the image model). */
   scenes: { narration: string; visual: string }[];
   caption: string;
   hashtags: string[];

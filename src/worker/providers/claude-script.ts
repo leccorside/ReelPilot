@@ -60,6 +60,7 @@ How to write the script:
 - The first scene's narration is the hook, a single sentence; repeat it exactly in "hook".
 - Narration, title, caption and hashtags are in the requested language. "visual" and "topic" are always in English, because they feed an image model and a topic list.
 - Each "visual" describes one concrete, filmable still image: subject, setting, light, framing. No text or letters in the image, no logos or brands, and no recognizable real person.
+- The image model paints any words a visual suggests, so never describe a title card, sign, caption, poster, screen or open page with writing, and never put the video's topic in a visual as a title ("a shot about X"): describe what is seen instead.
 - Pick a specific subject inside the niche, not a general overview. Never repeat a subject from the "already covered" list, even with a different angle.
 - Facts must be true and well documented. Do not invent statistics, dates, names or quotes; when unsure about a detail, leave it out or choose a better-documented subject.
 

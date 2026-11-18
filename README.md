@@ -357,6 +357,8 @@ Todos os componentes atuais são orquestrados pelo Docker Compose.
 | `s3-init` | `amazon/aws-cli:2.39.7` | Inicialização do bucket |
 | `mailpit` | `axllent/mailpit:v1.21.8` | Captura de e-mails |
 | `kokoro` | `ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.2` | Narração na CPU (só com o perfil `ai`; 4,9 GB; 4 CPUs e 4 GB) |
+| `comfyui` | `docker/comfyui` (ComfyUI v0.43.0 + PyTorch CUDA 13) | Imagens das cenas na GPU NVIDIA (só com o perfil `ai`) |
+| `comfy-models-init` | `docker/comfyui` | Baixa e confere os modelos de imagem (13,7 GB) e encerra |
 | `e2e` | `mcr.microsoft.com/playwright:v1.64.1-noble` | Testes automatizados E2E |
 
 O serviço `e2e` é executado sob demanda com o perfil de testes.
@@ -370,6 +372,24 @@ O serviço `e2e` é executado sob demanda com o perfil de testes.
 5. A cada minuto, o worker confere vídeos esquecidos: os que ficaram fora da fila (Redis fora do ar na criação) voltam para ela, e os que falharam sem registro são marcados como falha e estornados.
 
 A montagem usa ffmpeg de verdade e gera MP4 1080×1920 H.264/AAC mais uma miniatura. A narração ainda é silêncio e as imagens são de cor sólida (passos 7 e 8). `FAKE_PROVIDER_DELAY_MS` (2 s no desenvolvimento) faz cada etapa falsa demorar, para o progresso aparecer no painel.
+
+### Imagens com ComfyUI + FLUX.1-schnell
+
+Com `IMAGE_PROVIDER=comfyui` e o perfil `ai`, as imagens das cenas vêm do container `comfyui` na GPU NVIDIA (o padrão `fake` gera cores sólidas):
+
+- **Imagem:** `docker/comfyui/`, com ComfyUI v0.43.0, o nó ComfyUI-GGUF e PyTorch 2.14.1 + CUDA 13, rodando sem root e sem porta publicada.
+- **Modelos:** ficam no volume `comfy-models`, baixados uma vez pelo serviço `comfy-models-init` (~13,7 GB, com o SHA-256 de cada arquivo conferido):
+  - FLUX.1-schnell em GGUF Q5_K_S;
+  - T5 em fp8;
+  - CLIP-L;
+  - VAE.
+
+  Todos têm licença comercial; o FLUX.1-dev não é usado.
+- **Fluxo:** versionado em `docker/comfyui/workflows/flux-schnell.json`: 4 passos, 768×1344, e o ffmpeg amplia para 1080×1920. A imagem volta pelo WebSocket, sem ficar gravada no ComfyUI.
+- **Consistência:** uma imagem por cena, com a mesma semente em todo o vídeo e um prompt base por estilo de arte (sem nomes de marcas).
+- **Falhas:** cada imagem é salva no S3 assim que fica pronta; numa nova tentativa, só as que faltam são geradas. Se faltar memória na GPU, o worker pede ao ComfyUI que libere a VRAM e tenta de novo.
+- **Desempenho na RTX 3060:** ~35 s por imagem (o texto passa pelo T5 na CPU, para o FLUX ficar fixo na GPU), pico de 10,1 GB de VRAM e ~10 GB de RAM. A primeira imagem depois de o ComfyUI iniciar leva alguns minutos, porque carrega 13 GB de modelos. Medição: `docker compose exec worker npx tsx scripts/image-bench.ts`.
+- **Atenção:** enquanto o ComfyUI trabalha, nada mais pode usar a VRAM da placa (Docker Model Runner, Ollama, jogos). Com o perfil `ai` inteiro (ComfyUI + Kokoro), o WSL precisa de pelo menos 16 GB de memória.
 
 ### Narração com o Kokoro
 
@@ -398,7 +418,6 @@ Com `SCRIPT_PROVIDER=claude` e `ANTHROPIC_API_KEY` no `.env`, o roteiro vem da C
 | Serviço | Responsabilidade |
 |---|---|
 | `scheduler` | Agendamento de geração e publicação |
-| `comfyui` | Geração de imagens com IA |
 | `caddy` | Proxy reverso e HTTPS |
 
 ---
@@ -684,7 +703,7 @@ O desenvolvimento é feito de forma incremental, em etapas numeradas (Passo 0 a 
 - [x] Fila de geração (BullMQ) e worker com etapas retomáveis, gerando MP4 real com provedores falsos — Passo 5
 - [x] Roteiro com a Claude API, com saída validada, revisão de conteúdo e custo por vídeo — Passo 6 (falta a bateria real)
 - [x] Narração local com o Kokoro na CPU, com tempos das palavras e prévia real no assistente — Passo 7
-- [ ] Geração local de imagens
+- [x] Imagens locais com ComfyUI + FLUX.1-schnell na RTX 3060, uma por cena, retomáveis — Passo 8
 - [ ] Montagem automatizada dos vídeos
 - [ ] Sincronização de legendas e áudio
 

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { and, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@/server/db";
 import { series, videoSteps, videos, type VideoScript } from "@/server/db/schema";
-import { deletePrefix, getObject, keys, putObject, type Storage } from "@/server/storage";
+import { deletePrefix, getObject, keys, listKeys, putObject, type Storage } from "@/server/storage";
 import { UNFINISHED } from "@/server/videos";
 import { ProviderError, type Providers, type SeriesBrief, type WordTiming } from "./providers/types";
 import { renderVideo } from "./render";
@@ -25,7 +25,13 @@ export type StepName = Step["name"];
 
 type ScriptOut = { script: VideoScript; model: string };
 type VoiceOut = { audioKey: string; durationMs: number; sceneDurationsMs: number[]; words: WordTiming[] };
-type ImagesOut = { imageKeys: string[] };
+/** `drawn`: images made in the attempt that finished the step (the rest came from earlier attempts). */
+type ImagesOut = { imageKeys: string[]; drawn: number };
+
+/** The same seed for every scene of a video (a consistent look), different between videos. */
+export function videoSeed(videoId: string): number {
+  return Number.parseInt(videoId.replace(/-/g, "").slice(0, 12), 16) || 1; // 48 bits, safe as a JS number
+}
 type RenderOut = { videoKey: string; thumbnailKey: string; durationMs: number };
 type Outputs = { script?: ScriptOut; voice?: VoiceOut; images?: ImagesOut; render?: RenderOut };
 
@@ -215,15 +221,27 @@ const RUN: Record<StepName, (deps: PipelineDeps, ctx: Ctx) => Promise<StepResult
 
   async images(deps, ctx) {
     const scenes = ctx.out.script!.script.scenes.map((s) => s.visual);
-    const images = await deps.providers.images.draw({ scenes, artStyle: ctx.brief.artStyle, workDir: ctx.dir });
-    if (images.length !== scenes.length) throw new Error(`got ${images.length} images for ${scenes.length} scenes`);
+    // Each image is stored as soon as it is drawn: after a failure, only the missing ones are redrawn.
+    const stored = new Set(await listKeys(deps.storage, `${ctx.prefix}images/`));
+    const seed = videoSeed(ctx.videoId);
     const imageKeys: string[] = [];
-    for (const [i, img] of images.entries()) {
+    let drawn = 0;
+    for (const [i, visual] of scenes.entries()) {
+      const already = ["png", "jpg"].map((ext) => `${ctx.prefix}images/scene-${i + 1}.${ext}`).find((k) => stored.has(k));
+      if (already) {
+        imageKeys.push(already);
+        continue;
+      }
+      // Each image takes GPU time: stop as soon as the customer deletes the video.
+      const [still] = await deps.db.select({ id: videos.id }).from(videos).where(eq(videos.id, ctx.videoId));
+      if (!still) throw new VideoGone();
+      const img = await deps.providers.images.draw({ visual, artStyle: ctx.brief.artStyle, seed, index: i, workDir: ctx.dir });
       const key = `${ctx.prefix}images/scene-${i + 1}.${img.mimeType === "image/png" ? "png" : "jpg"}`;
       await putObject(deps.storage, key, img.data, img.mimeType);
       imageKeys.push(key);
+      drawn++;
     }
-    return { output: { imageKeys } satisfies ImagesOut };
+    return { output: { imageKeys, drawn } satisfies ImagesOut };
   },
 
   async render(deps, ctx) {

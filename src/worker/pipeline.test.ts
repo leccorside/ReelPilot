@@ -6,7 +6,7 @@ import { videos } from "@/server/db/schema";
 import { keys, listKeys } from "@/server/storage";
 import { createVideo, deleteVideo, failVideo } from "@/server/videos";
 import { ffmpegThreads, probe } from "./ffmpeg";
-import { failureMessage, processVideo, StepError, type PipelineDeps } from "./pipeline";
+import { failureMessage, processVideo, StepError, type PipelineDeps, videoSeed } from "./pipeline";
 import { FAKE_MS_PER_WORD, fakeProviders, fakeScript } from "./providers/fake";
 import { ProviderError, type Providers } from "./providers/types";
 import { credits, downloadTo, newVideo, stepRows, testStorage, testTmpRoot, videoRow } from "./test-helpers";
@@ -106,26 +106,54 @@ describe("video pipeline", { timeout: 90_000 }, () => {
     expect(steps.images).toMatchObject({ status: "failed", attempts: 1, error: "GPU out of memory" });
 
     expect(await processVideo(deps(providers), videoId)).toBe("ready");
-    expect(calls).toEqual({ script: 1, tts: 1, images: 2 });
+    expect(calls).toEqual({ script: 1, tts: 1, images: 5 }); // the failed first image, then the 4 scenes
     steps = await stepRows(db, videoId);
     expect(steps.images).toMatchObject({ status: "succeeded", attempts: 2 });
     expect(steps.render).toMatchObject({ status: "succeeded", attempts: 1 });
     expect(await credits(db, userId, videoId)).toEqual({ debits: 1, refunds: 0, balance: 4 });
   });
 
+  it("images: a failure half-way keeps the images already made; the retry draws only the missing ones, with one seed per video", async () => {
+    const { videoId } = await newVideo(db);
+    const base = fakeProviders();
+    const drawn: { index: number; seed: number }[] = [];
+    let failAt: number | null = 2;
+    const providers: Providers = {
+      ...base,
+      images: {
+        draw: async (input) => {
+          if (input.index === failAt) {
+            failAt = null;
+            throw new ProviderError("the GPU ran out of memory (is something else using it?)", true);
+          }
+          drawn.push({ index: input.index, seed: input.seed });
+          return base.images.draw(input);
+        },
+      },
+    };
+    expect(await processVideo(deps(providers), videoId).catch((e) => e.message)).toBe("Creating the images failed: the GPU ran out of memory (is something else using it?)");
+    expect(await processVideo(deps(providers), videoId)).toBe("ready");
+    expect(drawn.map((d) => d.index)).toEqual([0, 1, 2, 3]); // 0 and 1 drawn once, then only 2 and 3
+    expect(new Set(drawn.map((d) => d.seed))).toEqual(new Set([videoSeed(videoId)]));
+    expect((await stepRows(db, videoId)).images).toMatchObject({ attempts: 2, output: { drawn: 2 } });
+  });
+
   it("stops when the video is deleted while being made, and leaves no files behind", async () => {
     const { userId, videoId } = await newVideo(db);
     const base = fakeProviders();
+    let drawn = 0;
     const providers: Providers = {
       ...base,
       images: {
         draw: async (i) => {
-          await deleteVideo(db, userId, videoId); // the customer deletes it mid-way
+          drawn++;
+          if (i.index === 0) await deleteVideo(db, userId, videoId); // the customer deletes it mid-way
           return base.images.draw(i);
         },
       },
     };
     expect(await processVideo(deps(providers), videoId)).toBe("skipped");
+    expect(drawn).toBe(1); // no GPU time spent on the other scenes of a deleted video
     expect(await videoRow(db, videoId)).toBeUndefined();
     expect(await listKeys(storage, keys.video(userId, videoId))).toEqual([]);
     // Deleted before it was finished: the credit came back (5 - 1 + 1). The ledger rows stay,

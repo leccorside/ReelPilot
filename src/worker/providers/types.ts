@@ -45,8 +45,12 @@ export interface TtsProvider {
 }
 
 export interface ImageProvider {
-  /** One vertical image per scene, in order. `workDir` is a scratch folder of this video. */
-  draw(input: { scenes: string[]; artStyle: string; workDir: string }): Promise<SceneImage[]>;
+  /**
+   * One vertical image for one scene. Called once per scene, so a video whose images step failed
+   * half-way only redraws the missing ones. `seed` is the same for every scene of a video (a
+   * consistent look); `workDir` is a scratch folder of this video.
+   */
+  draw(input: { visual: string; artStyle: string; seed: number; index: number; workDir: string }): Promise<SceneImage>;
 }
 
 export type Providers = { script: ScriptProvider; tts: TtsProvider; images: ImageProvider };

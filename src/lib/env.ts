@@ -54,6 +54,9 @@ const envSchema = z.object({
   TTS_PROVIDER: z.enum(["fake", "kokoro"]).default("fake"),
   /** Kokoro-FastAPI inside the Docker network (also used by the wizard's voice preview). */
   KOKORO_URL: z.string().url().default("http://kokoro:8880"),
+  /** Images: "comfyui" (container "comfyui" on the GPU, profile "ai") or "fake" (solid colors). */
+  IMAGE_PROVIDER: z.enum(["fake", "comfyui"]).default("fake"),
+  COMFYUI_URL: z.string().url().default("http://comfyui:8188"),
   /** Pause in each fake step, so progress can be watched in the dashboard (0 in tests). */
   FAKE_PROVIDER_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(0),
 }).refine((e) => e.SCRIPT_PROVIDER !== "claude" || e.ANTHROPIC_API_KEY, {

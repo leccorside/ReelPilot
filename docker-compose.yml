@@ -76,6 +76,9 @@ services:
       CLAUDE_SCRIPT_EFFORT: ${CLAUDE_SCRIPT_EFFORT:-medium}
       # Real narration with TTS_PROVIDER=kokoro (needs the "ai" profile: COMPOSE_PROFILES=ai in .env).
       TTS_PROVIDER: ${TTS_PROVIDER:-fake}
+      # Real images with IMAGE_PROVIDER=comfyui (same "ai" profile; needs the NVIDIA GPU).
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER:-fake}
+      COMFYUI_URL: http://comfyui:8188
       FAKE_PROVIDER_DELAY_MS: ${FAKE_PROVIDER_DELAY_MS:-2000}
     volumes:
       - .:/app
@@ -121,6 +124,33 @@ services:
       start_period: 120s
       retries: 5
     restart: unless-stopped
+
+  # Scene images: ComfyUI + FLUX.1-schnell (GGUF) on the RTX 3060 (profile "ai"). Internal only.
+  # Nothing else may use the GPU memory while it works (Docker Model Runner, Ollama, games...).
+  comfyui:
+    build:
+      context: ./docker/comfyui
+    image: reelpilot-comfyui:${IMAGE_TAG:-local}
+    profiles: ["ai"]
+    gpus: all
+    volumes:
+      - comfy-models:/models:ro
+    depends_on:
+      comfy-models-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Downloads the image models (~13.7 GB, SHA-256 checked) into the "comfy-models" volume, then exits.
+  # Already-checked files are skipped, so after the first time it takes a second.
+  comfy-models-init:
+    build:
+      context: ./docker/comfyui
+    image: reelpilot-comfyui:${IMAGE_TAG:-local}
+    profiles: ["ai"]
+    entrypoint: ["/usr/local/bin/download-models.sh"]
+    volumes:
+      - comfy-models:/models
+    restart: "no"
 
   # Applies pending migrations (./drizzle) and exits; web and worker start only after it succeeds.
   migrate:
@@ -232,3 +262,4 @@ volumes:
   redis-data:
   s3-data:
   worker-tmp:
+  comfy-models:

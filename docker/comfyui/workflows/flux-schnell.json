@@ -1,0 +1,26 @@
+{
+  "_comment": "FLUX.1-schnell (GGUF Q5_K_S) text-to-image in ComfyUI API format. The worker fills the %PLACEHOLDERS% (src/worker/providers/comfy-images.ts). 4 steps, cfg 1 (schnell is distilled: no negative prompt), 768x1344 (9:16; ffmpeg scales to 1080x1920). The image comes back over the websocket (SaveImageWebsocket): nothing is saved on the server. The text encoders run on the CPU (device: cpu): FLUX (8 GB) and T5 (4.7 GB) don't fit together in the RTX 3060's 12 GB, and swapping them took ~136 s per image; with T5 on the CPU, FLUX stays on the GPU.",
+  "1": { "class_type": "UnetLoaderGGUF", "inputs": { "unet_name": "flux1-schnell-Q5_K_S.gguf" } },
+  "2": { "class_type": "DualCLIPLoader", "inputs": { "clip_name1": "t5xxl_fp8_e4m3fn.safetensors", "clip_name2": "clip_l.safetensors", "type": "flux", "device": "cpu" } },
+  "3": { "class_type": "VAELoader", "inputs": { "vae_name": "ae.safetensors" } },
+  "4": { "class_type": "CLIPTextEncode", "inputs": { "text": "%PROMPT%", "clip": ["2", 0] } },
+  "5": { "class_type": "ConditioningZeroOut", "inputs": { "conditioning": ["4", 0] } },
+  "6": { "class_type": "EmptySD3LatentImage", "inputs": { "width": 768, "height": 1344, "batch_size": 1 } },
+  "7": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["6", 0],
+      "seed": "%SEED%",
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "8": { "class_type": "VAEDecodeTiled", "inputs": { "samples": ["7", 0], "vae": ["3", 0], "tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8 } },
+  "9": { "class_type": "SaveImageWebsocket", "inputs": { "images": ["8", 0] } }
+}

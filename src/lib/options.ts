@@ -28,15 +28,20 @@ export const VOICES = [
   { id: "marcus", name: "Marcus", gender: "Male", desc: "Deep and dramatic, perfect for scary stories." },
 ];
 
+/**
+ * Art styles. The ids are stored in the series, so they stay; names and image prompts never use a
+ * trademark (Passo 8 renamed "Lego", "Disney", "Ghibli" and "Ghibsky"). `prompt` is added to every
+ * scene's description for the image model (English, like the descriptions).
+ */
 export const ART_STYLES = [
-  { id: "realism", name: "Realism", variant: 2 },
-  { id: "polaroid", name: "Polaroid", variant: 1 },
-  { id: "lego", name: "Lego", variant: 4 },
-  { id: "disney", name: "Disney", variant: 5 },
-  { id: "ghibsky", name: "Ghibsky", variant: 3 },
-  { id: "anime", name: "Anime", variant: 0 },
-  { id: "painting", name: "Painting", variant: 6 },
-  { id: "ghibli", name: "Ghibli", variant: 7 },
+  { id: "realism", name: "Realism", variant: 2, prompt: "photorealistic photograph, natural light, 35mm lens, sharp focus, rich detail" },
+  { id: "polaroid", name: "Polaroid", variant: 1, prompt: "vintage instant film photograph, faded warm colors, soft vignette, light film grain" },
+  { id: "lego", name: "Toy Bricks", variant: 4, prompt: "miniature diorama built entirely from colorful plastic toy construction bricks, glossy plastic, tilt-shift" },
+  { id: "disney", name: "3D Animation", variant: 5, prompt: "3D animated feature film still, expressive stylized characters, soft cinematic lighting, vibrant colors" },
+  { id: "ghibsky", name: "Dreamy Skies", variant: 3, prompt: "hand-painted anime background art, towering cumulus clouds, bright blue sky, lush green scenery" },
+  { id: "anime", name: "Anime", variant: 0, prompt: "anime illustration, clean line art, cel shading, vivid colors" },
+  { id: "painting", name: "Painting", variant: 6, prompt: "oil painting on canvas, visible brush strokes, rich textures, dramatic light" },
+  { id: "ghibli", name: "Fantasy Watercolor", variant: 7, prompt: "whimsical hand-drawn watercolor animation style, soft pastel colors, cozy fantasy atmosphere" },
 ];
 
 export const CAPTION_STYLES = [

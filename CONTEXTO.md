@@ -1,7 +1,7 @@
 # CONTEXTO — ReelPilot (de protótipo do FacelessReels a produto real)
 
 ## Estado atual
-- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 5 estão concluídos**: fundação, banco, autenticação, API do painel, armazenamento de arquivos e fila de geração com worker. O **Passo 6** (roteiro com a Claude API) está implementado e testado com cliente simulado; falta a bateria real, bloqueada pela conta da Anthropic sem créditos.
+- Next.js 14 (app router) em **modo servidor** (`output: "standalone"`, `trailingSlash`) + Tailwind 3 + `@tailwindcss/typography`. O plano do produto real está no `PASSOS.md`, um arquivo **local, fora do git** (listado no `.gitignore`). Quem clonar o repositório não o recebe, por isso as decisões e o progresso de cada passo também ficam registrados aqui. Os **passos 0 a 5, 7 e 8 estão concluídos**: fundação, banco, autenticação, API do painel, armazenamento, fila com worker, narração com Kokoro e imagens com ComfyUI + FLUX na RTX 3060. O **Passo 6** (roteiro com a Claude API) está implementado e testado com cliente simulado; falta a bateria real, bloqueada pela conta da Anthropic sem créditos.
 - **Geração de vídeos (Passo 5):** "Generate video" coloca o vídeo na fila BullMQ `video-generation`, e o serviço `worker` executa roteiro → narração → imagens → montagem, com etapas retomáveis, 3 tentativas e estorno na falha definitiva. Por enquanto com provedores falsos (roteiro fixo, silêncio, imagens de cor sólida) e ffmpeg real: sai um MP4 1080×1920 com miniatura, que aparece no painel e pode ser baixado.
 - **Arquivos:**
   - bucket S3 privado (SeaweedFS), acessado só pelo app;
@@ -433,7 +433,55 @@
       - `e2e/voice.spec.ts` (2): prévia em hindi tocando com o WAV real; aviso do francês e sem alemão na lista;
       - resultado: typecheck ✅, lint ✅, Vitest 115/115 ✅, Playwright 51/51 ✅ duas vezes.
 
+28. **Passo 8 — Imagens com ComfyUI + FLUX.1-schnell (2026-11-16):**
+    - **Imagem** `docker/comfyui/Dockerfile` (`reelpilot-comfyui`, 12 GB):
+      - `python:3.12.12-slim-bookworm` + PyTorch 2.14.1+cu130 (as rodas trazem o CUDA; o runtime `nvidia` do Docker injeta o driver 616);
+      - ComfyUI v0.43.0 + ComfyUI-GGUF `6ea2651`, usuário `comfy` (1001), healthcheck `/system_stats`;
+      - `extra_model_paths.yaml` aponta para `/models`.
+      - Versões escolhidas com pelo menos duas semanas: a v0.44/0.45 do ComfyUI e o PyTorch 2.15 eram recentes demais.
+    - **Modelos** (`download-models.sh`, serviço `comfy-models-init`, volume `comfy-models`):
+
+      | Arquivo | Tamanho |
+      |---|---|
+      | `flux1-schnell-Q5_K_S.gguf` (city96) | 8,26 GB |
+      | `t5xxl_fp8_e4m3fn` (comfyanonymous) | 4,89 GB |
+      | `clip_l` (comfyanonymous) | 0,25 GB |
+      | `ae.safetensors` (VAE) | 0,34 GB |
+
+      - O VAE vem de `Comfy-Org/Lumina_Image_2.0_Repackaged`, porque o repositório da Black Forest Labs é `gated`, exige login e aceite de termos; o SHA-256 é igual em dois repositórios da Comfy-Org e o tamanho é igual ao oficial.
+      - Tamanho e SHA-256 conferidos; o marcador `.ok` evita conferir de novo; download retomável (`curl -C -`).
+      - Q5_K_S porque cabe na VRAM com folga (o Q8 de 12,7 GB não caberia).
+    - **Fluxo** `docker/comfyui/workflows/flux-schnell.json`:
+      - nós: `UnetLoaderGGUF` → `DualCLIPLoader` (**`device: cpu`**) → `CLIPTextEncode` → `ConditioningZeroOut` (sem prompt negativo, porque o schnell usa cfg 1) → `EmptySD3LatentImage` 768×1344 → `KSampler` (4 passos, euler/simple) → `VAEDecodeTiled` → `SaveImageWebsocket`;
+      - o worker importa o JSON, e o esbuild o embute no `worker.mjs` (conferido).
+    - **Provedor** `src/worker/providers/comfy-images.ts`:
+      - abre o WebSocket com um `clientId`, envia o fluxo por `/prompt` e recebe a imagem em quadro binário (8 bytes de cabeçalho e o PNG); o fim é o `executing` com `node: null`;
+      - erro do modelo é repetível; falta de VRAM → `POST /free` (descarrega os modelos) e mais uma tentativa;
+      - fluxo recusado (modelo ausente) é definitivo, com mensagem genérica e "ACTION NEEDED" no log;
+      - tempo-limite de 15 min com `/interrupt`;
+      - o prompt junta cena, estilo e "Vertical 9:16 composition, no text, no letters, no watermark, no logo".
+    - **Pipeline:** `ImageProvider.draw` passou a gerar **uma imagem por vez**:
+      - a etapa salva cada imagem no S3 assim que fica pronta, e numa nova tentativa pula as que já existem (`output.drawn` conta as feitas na tentativa final);
+      - mesma semente em todas as cenas (`videoSeed(videoId)`, 48 bits do id);
+      - antes de cada imagem, confere se o vídeo ainda existe, para não gastar GPU num vídeo apagado.
+    - **Estilos** (`ART_STYLES` com `prompt`): Lego → "Toy Bricks", Disney → "3D Animation", Ghibsky → "Dreamy Skies", Ghibli → "Fantasy Watercolor". Ids mantidos (estão nas séries) e prompts sem nenhuma marca.
+    - **Medições na RTX 3060** (`scripts/image-bench.ts`, 8 estilos):
+      - primeira versão: **~136 s por imagem** com a GPU parada (2 a 11%), porque FLUX (8 GB) e T5 (4,7 GB) não cabem juntos e o ComfyUI trocava um pelo outro a cada imagem;
+      - com o T5 na CPU: **~35 s por imagem** (~17 s de geração a 4,3 s por passo + ~18 s de T5 na CPU e decodificação), GPU a 100% e 156 W, **pico de 10,1 GB de VRAM**, 68 °C;
+      - a primeira imagem depois de o ComfyUI iniciar leva de 2,7 a 4,8 min, porque carrega 13 GB do SSD USB;
+      - a decodificação em blocos não mudou o tempo, mas evita descarregar 1,8 GB do FLUX a cada imagem;
+      - RAM: ComfyUI ~10,3 GB (o T5 fica na CPU); com Kokoro e o resto, pico de 13,3 GB de 15,6 GB.
+    - **Vídeo completo real** (voz Kokoro + 4 imagens ComfyUI): voz 7,6 s, imagens 148,7 s, montagem 13 s, ~2 min 50 s no total.
+    - **Qualidade:** as imagens dos 8 estilos foram conferidas visualmente: estilos reconhecíveis, sem texto nem marca d'água. No primeiro vídeo, a cena "an eye-catching opening shot about *\<tema\>*" do roteiro falso virou uma tela de título com o tema escrito. Corrigido no roteiro falso (cenas concretas) e reforçado no prompt do roteiro real (nunca descrever títulos, placas, telas ou páginas com texto). O vídeo seguinte saiu sem texto e com visual coerente entre as cenas.
+    - **Testes:**
+      - `comfy-images.test.ts` (5, ComfyUI simulado): fluxo com prompt, estilo, semente e T5 na CPU; falta de VRAM com `/free`; erro repetível; fluxo recusado definitivo; tempo-limite com `/interrupt`; template não alterado;
+      - `pipeline.test.ts` (+1): a nova tentativa gera só as imagens que faltaram, com a mesma semente; vídeo apagado não gasta GPU com as outras cenas;
+      - resultado: typecheck ✅, lint ✅, Vitest 121/121 ✅, Playwright 51/51 ✅ duas vezes.
+
 ## Decisões
+- **T5 na CPU no ComfyUI:** o FLUX fica fixo na GPU e cada imagem cai de ~136 s para ~35 s. O texto é processado na CPU em alguns segundos.
+- **Imagens pelo WebSocket, uma por chamada:** nada se acumula no disco do ComfyUI, e cada imagem pronta fica guardada antes da próxima. Funciona também com o ComfyUI em outra máquina (a GPU de produção ainda não foi decidida).
+- **Imagens falsas continuam o padrão do desenvolvimento** (`IMAGE_PROVIDER=fake`), porque o ComfyUI ocupa 12 GB de imagem, 13,7 GB de modelos e ~10 GB de RAM. Ligar: `IMAGE_PROVIDER=comfyui` e `COMPOSE_PROFILES=ai`.
 - **Narração na CPU, uma requisição por cena:** a duração de cada cena sai do próprio áudio (as imagens acompanham a fala sem estimativa), ao custo de algumas requisições a mais por vídeo, o que é desprezível com o Kokoro local.
 - **Voz falsa continua o padrão do desenvolvimento** (`TTS_PROVIDER=fake`), porque o Kokoro pesa 4,9 GB e 2 GB de memória. Ligar: `TTS_PROVIDER=kokoro` e `COMPOSE_PROFILES=ai` no `.env`.
 - **Modelo do roteiro: Claude Sonnet 5.5** (como no `PASSOS.md`), configurável por `CLAUDE_SCRIPT_MODEL`. O Claude Opus 5.5 é mais capaz e custa o dobro (US$ 4/20 contra 2/10 por milhão de tokens). Trocar é só mudar a variável e reavaliar com a bateria.
@@ -478,6 +526,10 @@
 - **E2E instável na bateria completa** (testes diferentes estourando 60 s a cada rodada, todos passando isolados): os workers padrão (metade dos núcleos) sobrecarregavam o único servidor de desenvolvimento. `workers: 4` no `playwright.config.ts` deixou a bateria estável e mais rápida (2,2 min contra 2,9 a 4,1).
 - **`docker compose build` falhava com "failed to execute bake: exit status 1"** (2026-11-14), sem outro detalhe. Causa: a sessão estava em `d:\...` (letra minúscula), o contexto do build virou `d:\PROJETOS\...` e o Dockerfile `D:\PROJETOS\...`, e o buildx bake considera o Dockerfile fora do contexto. Correção: o `dc.ps1` passou a sempre usar a letra da unidade em maiúscula. Diagnóstico: `docker compose build --print` mostra os dois caminhos.
 - **`dc.ps1 prod-build`/`prod-up` montavam `docker -f …` sem o `compose`** ("unknown shorthand flag: 'f'"). Corrigido; o `prod-build` agora constrói web, worker e migrate.
+- **O E: é um SSD externo USB** (INFOKIT USB 3.1, 954 GB), onde ficam todos os discos do Docker (`E:\docker\DockerDesktopWSL`). Isso explica a queda de 2026-11-14 (o USB sumiu por um instante) e a carga lenta dos modelos do ComfyUI (~50 MB/s por dentro do `.vhdx`). Mover os discos do Docker para o NVMe (D:) aceleraria a primeira imagem e evitaria as quedas.
+- **Docker caiu de novo em 2026-11-16 às 17:12 durante o download dos modelos:** o `.wslconfig` foi alterado às 17:12:35 (memória do WSL de 8 para 16 GB, fora desta sessão), e isso reiniciou a máquina virtual do WSL às 17:12:41. Correção: reabrir o Docker Desktop e rodar o `comfy-models-init` de novo (ele retoma e pula os arquivos conferidos). Com 8 GB, o ComfyUI (~10 GB de RAM) não caberia junto com o resto; com 16 GB, o pico medido foi de 13,3 GB.
+- **ComfyUI: primeira imagem estourou o tempo-limite de 5 min:** a carga dos 13 GB de modelos levou ~4,8 min. O tempo-limite subiu para 15 min.
+- **ComfyUI: ~136 s por imagem com a GPU parada:** FLUX e T5 não cabem juntos nos 12 GB e eram trocados a cada imagem. Correção: `DualCLIPLoader` com `device: cpu`, e o tempo caiu para ~35 s.
 - **Docker caiu no meio do trabalho por causa da unidade E:** (2026-11-14, 23:49). O log do backend mostrava `installing main distribution: creating distribution destination dir: mkdir E:\docker: O sistema não pode encontrar o caminho especificado`, e a distro `docker-desktop` sumiu do `wsl -l -v`. O E: (onde ficam os `.vhdx`) estava indisponível naquele instante. Correção: com o E: de volta, fechar todos os processos do Docker Desktop e abrir de novo. Ele recriou a distro principal, e o disco de dados com os volumes ficou intacto (276 vídeos conferidos). Se acontecer de novo, conferir se o E: está montado antes de mexer em qualquer coisa.
 - **`npm install -D` pelo `dc.ps1` instalou como dependência de produção:** o PowerShell interpreta `-D` como o parâmetro comum `-Debug` do script e o descarta. Use `--save-dev` (ou o Bash).
 - **Docker Desktop fechado depois do `wsl --shutdown`** da migração do Ubuntu (2026-11-13): `failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`. Basta abrir o Docker Desktop de novo.
@@ -494,14 +546,18 @@
 
 ## Pendências
 - **Fechar o Passo 6:** colocar créditos na conta da Anthropic (Plans & Billing), rodar `docker compose exec worker npx tsx scripts/script-battery.ts` (cerca de US$ 0,50 a 1,00) e registrar aqui a revisão dos roteiros por amostragem. No Git Bash, use `MSYS_NO_PATHCONV=1` se passar um caminho `/tmp/...` como argumento.
-- **Próximo: Passo 8 (imagens com ComfyUI + FLUX na RTX 3060)**, aguardando autorização.
+- **Próximo: Passo 9 (montagem: zoom/pan, transições, legendas palavra a palavra, música, loudnorm)**, aguardando autorização.
+- **Otimização possível das imagens (não feita):** testar o FLUX em Q4_0 (6,8 GB, outro download), cujo formato costuma ser mais rápido de desempacotar que o Q5_K no ComfyUI-GGUF. A geração na GPU leva hoje ~17 s por imagem.
 - **Passo 12:** a série escolhe plataformas, não contas. Com dois canais do YouTube conectados, falta decidir em qual publicar (provavelmente escolher o canal na série).
 - Produção: criar um segundo cliente OAuth com o domínio `https` e publicar o app no Google Auth Platform (Passo 19).
 - Primeiro commit do repositório (pela pessoa).
 - Decisões da pessoa: nome/marca definitivos, onde fica a GPU em produção (worker de IA neste PC com túnel até a VPS, ou servidor com GPU), preços dos planos.
 
 ## Limitações conhecidas
-- **As imagens ainda são de cor sólida** (Passo 8). Roteiro real com `SCRIPT_PROVIDER=claude` (ainda sem a bateria real, por falta de crédito) e voz real com `TTS_PROVIDER=kokoro` + perfil `ai`;
+- **IA real é opcional no desenvolvimento:** roteiro real com `SCRIPT_PROVIDER=claude` (ainda sem a bateria real, por falta de crédito), voz real com `TTS_PROVIDER=kokoro` e imagens reais com `IMAGE_PROVIDER=comfyui`, os dois últimos com o perfil `ai`;
+- **O FLUX pode escrever texto na imagem** quando a descrição sugere um título, placa ou página (ele ignora "no text", porque o schnell não usa prompt negativo). A proteção é o roteiro descrever cenas concretas; não há detecção automática de texto nas imagens;
+- **A primeira imagem depois de o ComfyUI iniciar leva minutos** (13 GB lidos do SSD USB); as seguintes, ~35 s. A RTX 3060 faz cerca de 100 imagens por hora a quente, ou seja, ~17 vídeos de 6 cenas por hora só de imagens. É o número que limita a capacidade (Passo 9 mede o vídeo inteiro);
+- **Enquanto o ComfyUI trabalha, nada mais pode usar a VRAM** (Docker Model Runner, Ollama, jogos). Se faltar memória, o worker pede `/free` e tenta de novo; se continuar faltando, o vídeo é repetido pela fila e, no fim, falha com estorno;
 - **O áudio do MP4 sai a 24 kHz** (a taxa do Kokoro), sem normalização de volume (pico de -1,1 dB no teste). A mixagem com música, o loudnorm e a reamostragem para 48 kHz entram no Passo 9;
 - **Prévia de voz e narração dependem do Kokoro rodando:** sem o perfil `ai`, uma prévia ainda não gerada responde 503 (as já geradas continuam servidas do S3), e vídeos com `TTS_PROVIDER=kokoro` são repetidos até o serviço voltar e, se não voltar, falham com estorno; zoom/pan, transições, legendas e música, no Passo 9; o player no painel, no Passo 10 (por enquanto, miniatura e Download). Publish continua desativado até o Passo 12.
 - **A etapa de imagens não tem fila própria de concorrência 1 ainda:** com a GPU (Passo 8), as imagens de vários vídeos ao mesmo tempo vão precisar de um limite próprio (uma imagem por vez na RTX 3060).
